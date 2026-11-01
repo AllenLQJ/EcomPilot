@@ -6,7 +6,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY pilot ./pilot
 COPY stubs ./stubs
-COPY adapters ./adapters
 COPY static ./static
 COPY contracts ./contracts
 RUN useradd --system --uid 10001 app && chown -R app /app
