@@ -16,6 +16,7 @@ class ItemIn(BaseModel):
 class QuoteIn(BaseModel):
     items: list[ItemIn] = Field(min_length=1)
     coupon_ids: list[str] | None = None
+    auto_coupon: bool = False
 
 
 class AddonsIn(BaseModel):
@@ -29,7 +30,9 @@ class OrderCreateIn(BaseModel):
 
 @router.post("/api/v1/quotes", status_code=201)
 def create_quote(body: QuoteIn, ident: Identity = Depends(current_identity)):
-    return quotes.create_quote(get_engine(), ident, [i.model_dump() for i in body.items], body.coupon_ids)
+    # 未显式选券且未要求自动择优时不用券（避免未经同意消耗用户券）
+    coupons = body.coupon_ids if body.coupon_ids is not None else (None if body.auto_coupon else [])
+    return quotes.create_quote(get_engine(), ident, [i.model_dump() for i in body.items], coupons)
 
 
 @router.post("/api/v1/quotes/{quote_id}/confirm-addons", status_code=201)
