@@ -2,8 +2,14 @@ import asyncio
 import importlib
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+import os
+from pathlib import Path
 
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+
+from pilot.core.auth import issue_token
 from pilot.core.db import get_engine
 from pilot.core.errors import install_error_handlers
 from pilot.orders import service
@@ -40,3 +46,23 @@ for _mod in ("pilot.refunds.router", "pilot.aftersales.router", "pilot.chat.rout
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+class _DevTokenIn(BaseModel):
+    user_id: str
+    tenant_id: str = "SHOP_SELF_01"
+
+
+if os.environ.get("ECOMPILOT_DEV_TOKENS") == "1":
+    @app.post("/api/v1/dev/token")
+    def dev_token(body: _DevTokenIn):
+        return {"token": issue_token(body.user_id, body.tenant_id)}
+
+_INDEX = Path(__file__).resolve().parents[1] / "static" / "index.html"
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    if not _INDEX.exists():
+        return {"status": "ok", "ui": "static/index.html not built yet"}
+    return FileResponse(_INDEX)
