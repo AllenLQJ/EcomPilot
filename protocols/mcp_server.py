@@ -44,6 +44,13 @@ def resolve_image(sku_id: str) -> dict[str, Any]:
         return {"found": False}
 
 
+@mcp.tool(annotations=READ_ONLY)
+def get_weather(city: str) -> dict[str, Any]:
+    """查询城市天气；在线服务不可用时返回固定天气，无需数据库。"""
+    from pilot.mcp_tools import weather_tool
+    return weather_tool.get_weather(city)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--transport", choices=["stdio", "streamable-http"], default="stdio")

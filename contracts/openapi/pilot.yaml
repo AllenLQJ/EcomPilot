@@ -317,3 +317,56 @@ paths:
       responses:
         "200": {description: text/event-stream, content: {text/event-stream: {schema: {type: string}}}}
         "403": {$ref: "#/components/responses/Err"}
+  /internal/v1/catalog/skus/{sku_id}:
+    get:
+      summary: 按租户读取商品快照（金额为整数分）
+      security: [{internal: []}]
+      parameters:
+        - {name: sku_id, in: path, required: true, schema: {type: string}}
+        - {name: tenant_id, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: 商品快照
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sku_id, tenant_id, shop_id, catalog_category_id, category_name, brand_name, sku_name, unit_price_cents, sellable_stock, positive_review_ratio]
+                properties:
+                  sku_id: {type: string}
+                  tenant_id: {type: string}
+                  shop_id: {type: string}
+                  catalog_category_id: {type: string}
+                  category_name: {type: string}
+                  brand_name: {type: string, nullable: true}
+                  sku_name: {type: string}
+                  unit_price_cents: {type: integer, format: int64}
+                  sellable_stock: {type: integer}
+                  positive_review_ratio: {type: number, format: double}
+        "400": {$ref: "#/components/responses/Err"}
+        "401": {$ref: "#/components/responses/Err"}
+        "404": {$ref: "#/components/responses/Err"}
+  /internal/v1/catalog/categories:
+    get:
+      summary: 读取商品品类目录
+      security: [{internal: []}]
+      responses:
+        "200":
+          description: 品类列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [categories]
+                properties:
+                  categories:
+                    type: array
+                    items:
+                      type: object
+                      required: [catalog_category_id, parent_id, category_name, item_type]
+                      properties:
+                        catalog_category_id: {type: string}
+                        parent_id: {type: string, nullable: true}
+                        category_name: {type: string}
+                        item_type: {type: string, enum: [PHYSICAL, SERVICE]}
+        "401": {$ref: "#/components/responses/Err"}

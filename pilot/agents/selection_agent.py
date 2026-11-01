@@ -4,7 +4,9 @@ import re
 import httpx
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, StrictInt, ValidationError
-from sqlalchemy import text
+from sqlalchemy import text, bindparam
+
+from pilot.catalog.labels import resolve_label
 
 from pilot.core.errors import install_error_handlers
 
@@ -34,6 +36,17 @@ def _hints(need: str) -> tuple[set[str], set[str]]:
         for clause in clauses:
             if clause.get("predicted_label") == "ABSTAIN":
                 continue
+            # NLU 自带的提示优先；它没给（如手机/水果等目录里原本没有的品类）才用 Pilot 的映射表补。读表失败只是少一个来源。
+            if not (isinstance(clause.get("catalog_category_hint"), str) and clause["catalog_category_hint"]) or \
+                    not isinstance(clause.get("brand_hint"), str):
+                try:
+                    mapped = resolve_label(get_engine(), clause.get("predicted_label"))
+                except Exception:
+                    mapped = None
+                if mapped is not None:
+                    clause = {**clause,
+                              "catalog_category_hint": clause.get("catalog_category_hint") or mapped["catalog_category_id"],
+                              "brand_hint": clause.get("brand_hint") or mapped["brand_hint"]}
             if isinstance(clause.get("catalog_category_hint"), str):
                 categories.add(clause["catalog_category_hint"])
             if isinstance(clause.get("brand_hint"), str):
@@ -41,6 +54,32 @@ def _hints(need: str) -> tuple[set[str], set[str]]:
         return categories, brands
     except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
         return set(), set()
+
+
+def _rag_skus(query: str) -> set[str]:
+    settings = get_settings()
+    if not settings.rag_internal_token:
+        return set()
+    try:
+        response = httpx.post(settings.rag_url.rstrip("/") + "/api/v1/rag/search",
+                              headers={"X-Internal-Token": settings.rag_internal_token},
+                              json={"query": query, "top_k": 5}, timeout=settings.rag_timeout_s)
+        if response.status_code != 200:
+            return set()
+        hits = response.json()["hits"]
+        if not isinstance(hits, list):
+            return set()
+        result = set()
+        for hit in hits:
+            skus = hit["skus"]
+            if skus is None:
+                continue
+            if not isinstance(skus, list) or any(not isinstance(sku, str) for sku in skus):
+                return set()
+            result.update(skus)
+        return result
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return set()
 
 
 def handle(data: dict, trace_id: str) -> dict:
@@ -62,6 +101,7 @@ def handle(data: dict, trace_id: str) -> dict:
         for i, word in enumerate(words):
             params[f"word{i}"] = word
             matches.extend([f"INSTR(p.sku_name, :word{i})>0", f"INSTR(c.category_name, :word{i})>0"])
+        rag_skus = _rag_skus(need.text)
         with get_engine().connect() as connection:
             rows = [dict(row) for row in connection.execute(text(
                 "SELECT p.sku_id, p.sku_name, p.shop_id, p.catalog_category_id, "
@@ -71,8 +111,17 @@ def handle(data: dict, trace_id: str) -> dict:
                 "WHERE p.tenant_id=:tenant AND p.sellable_stock>0 AND p.is_addon_pool=0 "
                 "AND (:budget IS NULL OR p.unit_price_cents<=:budget) AND ("
                 + " OR ".join(matches) + ")"), params).mappings()]
+            missing = rag_skus - {row["sku_id"] for row in rows}
+            if missing:
+                rows.extend(dict(row) for row in connection.execute(text(
+                    "SELECT sku_id, sku_name, shop_id, catalog_category_id, unit_price_cents, "
+                    "positive_review_ratio, sellable_stock, brand_name FROM products_sku "
+                    "WHERE tenant_id=:tenant AND sellable_stock>0 AND is_addon_pool=0 "
+                    "AND (:budget IS NULL OR unit_price_cents<=:budget) AND sku_id IN :skus"
+                ).bindparams(bindparam("skus", expanding=True)),
+                    {**params, "skus": sorted(missing)}).mappings())
         rows.sort(key=lambda row: (
-            -(int(row["catalog_category_id"] in categories) + int(row["brand_name"] in brands)),
+            -(2 * int(row["sku_id"] in rag_skus) + int(row["catalog_category_id"] in categories) + int(row["brand_name"] in brands)),
             -row["positive_review_ratio"], row["sku_id"]))
         for row in rows[:3]:
             row.pop("brand_name")

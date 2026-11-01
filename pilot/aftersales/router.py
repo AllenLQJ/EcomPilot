@@ -45,9 +45,17 @@ def _analyze(reason: str | None) -> dict | None:
                                    json={"text": reason, "scene_type": "aftersales"})
             response.raise_for_status()
             data = response.json()
-            clause = next((c for c in data["clauses"]
-                           if c["category_confidence"] >= 0.65
-                           and c["predicted_label"] != "ABSTAIN"), {})
+            from pilot.catalog.labels import resolve_label
+            clause = next((dict(c) for c in data["clauses"]
+                           if c["category_confidence"] >= 0.65 and c["predicted_label"] != "ABSTAIN"), {})
+            if clause and not clause.get("catalog_category_hint"):
+                # NLU 自带的品类提示优先；它没给才用 Pilot 的映射表补（读表失败只是少一个来源）
+                try:
+                    mapped = resolve_label(get_engine(), clause["predicted_label"])
+                except Exception:
+                    mapped = None
+                if mapped is not None:
+                    clause["catalog_category_hint"] = mapped["catalog_category_id"]
             return Signal(**{k: clause[k] for k in (
                 "predicted_label", "category_confidence", "catalog_category_hint") if k in clause},
                 **{k: data[k] for k in ("sentiment", "sentiment_score", "priority_boost")}).model_dump()

@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     internal_token: str = "dev-internal-token"
     nlu_url: str = "http://127.0.0.1:8001"
     rag_url: str = "http://127.0.0.1:8002"
+    rag_internal_token: str = ""
+    rag_timeout_s: float = 2.0
     ops_url: str = "http://127.0.0.1:8000"
     quote_ttl_seconds: int = 900
     pay_timeout_seconds: int = 900

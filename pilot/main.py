@@ -39,7 +39,7 @@ app = FastAPI(title="EcomPilot", lifespan=lifespan)
 install_error_handlers(app)
 observability.install(app)
 app.include_router(orders_router)
-for _mod in ("pilot.refunds.router", "pilot.aftersales.router", "pilot.aftersales.internal", "pilot.chat.router"):
+for _mod in ("pilot.refunds.router", "pilot.aftersales.router", "pilot.aftersales.internal", "pilot.chat.router", "pilot.catalog.router"):
     try:
         app.include_router(importlib.import_module(_mod).router)
     except ModuleNotFoundError as e:

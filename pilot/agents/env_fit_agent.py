@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt, StrictStr, ValidationError
 
 from pilot.agents.base import make_agent_app
+from pilot.mcp_tools.weather_tool import get_weather
 
 
 class EnvInput(BaseModel):
@@ -12,16 +13,14 @@ class EnvInput(BaseModel):
     days: StrictInt = Field(default=1, ge=1)
 
 
-_WEATHER = {"杭州": (18, 75), "北京": (8, 30), "广州": (26, 80)}
-
-
 def handle(data: dict, trace_id: str) -> dict:
     try:
         request = EnvInput.model_validate(data)
     except ValidationError as exc:
         raise HTTPException(400, detail={"code": "INVALID_REQUEST", "message": "city 或 days 格式错误"}) from exc
-    temperature, humidity = _WEATHER.get(request.city, (20, 50))
-    return {
+    weather = get_weather(request.city)
+    temperature, humidity = weather["temperature_c"], weather["humidity_pct"]
+    result = {
         "city": request.city, "temperature_c": temperature, "humidity_pct": humidity,
         "advice": {
             "clothing": "建议厚外套，注意保暖" if temperature < 15 else (
@@ -30,6 +29,10 @@ def handle(data: dict, trace_id: str) -> dict:
                 "建议滋润保湿洗发水" if humidity < 40 else "建议温和日常洗发水"),
         },
     }
+
+    if weather["source"] == "open-meteo":
+        result["source"] = "open-meteo"
+    return result
 
 
 app = make_agent_app("env_fit", 8011, ["env_fit"], handle)
