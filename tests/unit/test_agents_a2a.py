@@ -8,6 +8,10 @@ from pilot.agents import aftersales_agent, pricing_order_agent, selection_agent
 from pilot.core.db import get_engine
 
 
+def _resp(status, **kw):
+    return httpx.Response(status, request=httpx.Request("POST", "http://x"), **kw)
+
+
 AGENTS = [(selection_agent, "selection", 8012),
           (pricing_order_agent, "pricing_order", 8013),
           (aftersales_agent, "aftersales", 8014)]
@@ -30,7 +34,7 @@ def test_pricing_and_addons(monkeypatch):
     calls = []
     def post(url, **kwargs):
         calls.append((url, kwargs))
-        return httpx.Response(201, json={"quote_id": "Q2", "total_payable_cents": 5100})
+        return _resp(201, json={"quote_id": "Q2", "total_payable_cents": 5100})
     monkeypatch.setattr(httpx, "post", post)
     for base in ["http://first", "http://second/"]:
         monkeypatch.setenv("ECOMPILOT_PILOT_URL", base)
@@ -50,7 +54,7 @@ def test_aftersales_candidates_never_confirm(monkeypatch):
         assert url == "http://pilot/api/v1/aftersales/candidates"
         assert kwargs["json"] == {"text": "坏了", "category_hint": "DIGITAL_TABLET"}
         assert kwargs["headers"] == {"Authorization": "Bearer jwt"}
-        return httpx.Response(200, json={"candidates": [{"order_id": "O"}], "nlu_signal": None})
+        return _resp(200, json={"candidates": [{"order_id": "O"}], "nlu_signal": None})
     monkeypatch.setenv("ECOMPILOT_PILOT_URL", "http://pilot")
     monkeypatch.setattr(httpx, "post", post)
     result = invoke(aftersales_agent, {"auth_token": "jwt", "action": "candidates", "text": "坏了",
@@ -74,7 +78,7 @@ def test_confirm(monkeypatch):
         assert url.endswith("/aftersales/confirm")
         assert kwargs["json"] == {"order_id": "O", "order_item_id": "I", "buyer_reason_text": "坏了", "evidence_urls": ["https://evidence"]}
         assert kwargs["headers"] == {"Authorization": "Bearer jwt"}
-        return httpx.Response(202, json={"claim_no": "C", "claim_status": "SUBMITTED"})
+        return _resp(202, json={"claim_no": "C", "claim_status": "SUBMITTED"})
     monkeypatch.setattr(httpx, "post", post)
     assert invoke(aftersales_agent, {"auth_token": "jwt", "action": "confirm", "order_id": "O", "order_item_id": "I",
                                   "buyer_reason_text": "坏了", "evidence_urls": ["https://evidence"]}).json()["output"]["claim_no"] == "C"
@@ -87,7 +91,7 @@ def test_confirm(monkeypatch):
 @pytest.mark.parametrize("status,code", [(401, "UNAUTHORIZED"), (403, "FORBIDDEN"), (404, "NOT_FOUND"),
                                        (409, "QUOTE_EXPIRED_OR_CHANGED"), (422, "INVALID_ADDON_SELECTION"), (502, "UPSTREAM_ERROR")])
 def test_error_translation(monkeypatch, module, data, status, code):
-    monkeypatch.setattr(httpx, "post", lambda *a, **kw: httpx.Response(status, json={"error": {"code": code, "message": "message"}}))
+    monkeypatch.setattr(httpx, "post", lambda *a, **kw: _resp(status, json={"error": {"code": code, "message": "message"}}))
     assert invoke(module, data).json() == {"status": "error", "error": {"code": code, "message": "message"}}
 
 
@@ -109,7 +113,7 @@ def test_selection_seed(db_name, monkeypatch, unavailable):
         if unavailable:
             raise httpx.ConnectError("NLU offline")
         # An unrelated hint must never exclude the actual keyword match.
-        return httpx.Response(200, json={"clauses": [{"predicted_label": "平板", "catalog_category_hint": "DIGITAL_TABLET"}]})
+        return _resp(200, json={"clauses": [{"predicted_label": "平板", "catalog_category_hint": "DIGITAL_TABLET"}]})
     monkeypatch.setattr(httpx, "post", post)
     result = invoke(selection_agent, {"tenant_id": "SHOP_SELF_01", "needs": [{"text": "洗发水"}, {"text": "平板"}]}).json()
     assert result["status"] == "ok"
@@ -120,7 +124,7 @@ def test_selection_seed(db_name, monkeypatch, unavailable):
 
 
 def test_selection_filters_and_top_three(db_name, monkeypatch):
-    monkeypatch.setattr(httpx, "post", lambda *a, **kw: httpx.Response(200, json={"clauses": [{"predicted_label": "ABSTAIN", "catalog_category_hint": "DIGITAL_TABLET"}]}))
+    monkeypatch.setattr(httpx, "post", lambda *a, **kw: _resp(200, json={"clauses": [{"predicted_label": "ABSTAIN", "catalog_category_hint": "DIGITAL_TABLET"}]}))
     with get_engine().begin() as conn:
         for index in range(5):
             conn.execute(text("INSERT INTO products_sku (sku_id, tenant_id, shop_id, catalog_category_id, sku_name, unit_price_cents, sellable_stock, positive_review_ratio, is_addon_pool) VALUES (:id, 'SHOP_SELF_01', 'SHOP_C', 'PERSONAL_SHAMPOO', '洗发水测试', 100, :stock, :ratio, :addon)"),
@@ -141,6 +145,6 @@ def test_invalid_envelope(module, name, port):
     (aftersales_agent, {"auth_token": "jwt", "action": "candidates"})])
 @pytest.mark.parametrize("status,body", [(502, None), (503, {"error": None}), (200, [])])
 def test_malformed_upstream(monkeypatch, module, data, status, body):
-    monkeypatch.setattr(httpx, "post", lambda *a, **kw: httpx.Response(status, json=body) if body is not None
-                        else httpx.Response(status, text="bad gateway"))
+    monkeypatch.setattr(httpx, "post", lambda *a, **kw: _resp(status, json=body) if body is not None
+                        else _resp(status, text="bad gateway"))
     assert invoke(module, data).json()["error"]["code"] == "UPSTREAM_ERROR"
