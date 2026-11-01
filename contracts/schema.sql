@@ -132,6 +132,7 @@ CREATE TABLE aftersale_requests (
   order_item_id VARCHAR(64) NOT NULL,
   claim_status VARCHAR(32) NOT NULL,              -- SUBMITTED | SUBMIT_FAILED | WITHDRAWN | COMPLETED
   buyer_reason_text TEXT NULL,
+  result_reason VARCHAR(200) NULL,                -- EcomOps 回写的驳回原因（REJECTED 时有值）；已有库由 pilot.core.migrations 幂等补列
   created_at DATETIME NOT NULL,
   UNIQUE KEY uk_claim_item (order_id, order_item_id),
   KEY idx_claim_user (tenant_id, user_id)

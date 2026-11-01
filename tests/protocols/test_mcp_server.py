@@ -15,10 +15,10 @@ def structured(result):
     return result.structured_content if getattr(result, "structured_content", None) is not None else result.content
 
 
-async def test_lists_three_read_only_tools():
+async def test_lists_four_read_only_tools():
     async with Client(mcp) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-    assert set(tools) == {"get_stock", "suggest_bundle", "resolve_image"}
+    assert set(tools) == {"get_stock", "suggest_bundle", "resolve_image", "get_weather"}
     assert all(t.annotations and t.annotations.read_only_hint for t in tools.values())
     assert tools["get_stock"].input_schema["required"] == ["sku_id"]
 

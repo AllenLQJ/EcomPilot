@@ -60,7 +60,8 @@ def test_status_shows_ops_state_and_needs_evidence(setup):
     r = client.get("/api/v1/aftersales/CLM1")
     assert r.status_code == 200
     assert r.json() == {"claim_no": "CLM1", "order_id": "O1", "order_status": "AFTER_SALE_OPEN",
-                        "claim_status": "NEED_MORE_EVIDENCE", "needs_evidence": True, "ops_available": True}
+                        "claim_status": "NEED_MORE_EVIDENCE", "needs_evidence": True, "ops_available": True,
+                        "result_reason": None}
     assert calls[0][:3] == ("GET", "/internal/v1/claims/CLM1/status", get_settings().internal_token)
 
 

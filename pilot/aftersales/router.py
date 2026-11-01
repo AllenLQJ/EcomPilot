@@ -154,7 +154,7 @@ class EvidenceIn(BaseModel):
 
 
 def _own_claim(conn, claim_no: str, identity: Identity):
-    row = conn.execute(text("""SELECT a.claim_no, a.order_id, a.order_item_id, a.claim_status, o.order_status
+    row = conn.execute(text("""SELECT a.claim_no, a.order_id, a.order_item_id, a.claim_status, a.result_reason, o.order_status
         FROM aftersale_requests a JOIN orders o ON o.order_id=a.order_id
         WHERE a.claim_no=:claim AND a.tenant_id=:tenant AND a.user_id=:user"""),
         {"claim": claim_no, "tenant": identity.tenant_id, "user": identity.user_id}).mappings().first()
@@ -191,7 +191,8 @@ def claim_status(claim_no: str, identity: Identity = Depends(current_identity)):
         ops = None      # Ops 暂不可用时只给本地视图，不让买家看到 5xx
     return {"claim_no": claim_no, "order_id": mine["order_id"], "order_status": mine["order_status"],
             "claim_status": ops["claim_status"] if ops else mine["claim_status"],
-            "needs_evidence": bool(ops and ops.get("needs_evidence")), "ops_available": ops is not None}
+            "needs_evidence": bool(ops and ops.get("needs_evidence")), "ops_available": ops is not None,
+            "result_reason": mine["result_reason"]}
 
 
 @router.post("/{claim_no}/evidence", status_code=202)

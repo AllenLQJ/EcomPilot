@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from pilot.core.auth import issue_token
 from pilot.core.db import get_engine
-from pilot.core import hardening, observability
+from pilot.core import hardening, migrations, observability
 from pilot.core.config import get_settings
 from pilot.core.errors import install_error_handlers
 from pilot.orders import service
@@ -30,6 +30,10 @@ async def _expire_loop():
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     hardening.enforce(get_settings())
+    try:
+        await asyncio.to_thread(migrations.ensure_columns, get_engine())
+    except Exception:    # 数据库暂不可用时不阻止启动；请求自己会报错
+        pass
     task = asyncio.create_task(_expire_loop())
     yield
     task.cancel()

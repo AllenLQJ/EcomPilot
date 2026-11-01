@@ -252,7 +252,7 @@ paths:
       summary: 买家查询自己售后申请的进度（审核端状态来自 Ops；Ops 不可用时返回本地状态并标 ops_available=false）
       parameters: [{name: claim_no, in: path, required: true, schema: {type: string}}]
       responses:
-        "200": {description: ok, content: {application/json: {schema: {type: object, required: [claim_no, order_id, order_status, claim_status, needs_evidence, ops_available], properties: {claim_no: {type: string}, order_id: {type: string}, order_status: {type: string}, claim_status: {type: string}, needs_evidence: {type: boolean}, ops_available: {type: boolean}}}}}}
+        "200": {description: ok, content: {application/json: {schema: {type: object, required: [claim_no, order_id, order_status, claim_status, needs_evidence, ops_available, result_reason], properties: {claim_no: {type: string}, order_id: {type: string}, order_status: {type: string}, claim_status: {type: string}, needs_evidence: {type: boolean}, ops_available: {type: boolean}, result_reason: {type: string, nullable: true, description: "审核端驳回原因；仅 REJECTED 时有值"}}}}}}
         "404": {$ref: "#/components/responses/Err"}
   /api/v1/aftersales/{claim_no}/evidence:
     post:
@@ -298,7 +298,7 @@ paths:
       parameters: [{name: claim_no, in: path, required: true, schema: {type: string}}]
       requestBody:
         required: true
-        content: {application/json: {schema: {type: object, required: [result], properties: {result: {type: string, enum: [REJECTED, WITHDRAWN]}}}}}
+        content: {application/json: {schema: {type: object, required: [result], properties: {result: {type: string, enum: [REJECTED, WITHDRAWN]}, reason: {type: string, maxLength: 200, nullable: true, description: "驳回原因（REJECTED 时存入 aftersale_requests.result_reason，买家在进度接口看到）"}}}}}
       responses:
         "200": {description: ok}
         "404": {$ref: "#/components/responses/Err"}

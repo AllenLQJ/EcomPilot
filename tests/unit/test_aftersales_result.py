@@ -48,3 +48,23 @@ def test_withdrawn_deletes_and_errors(db_name):
 def test_completed_conflict(db_name):
     _setup(status="REFUNDED_FULL", claim="COMPLETED")
     assert _client().post("/internal/v1/aftersales/c/result", json={"result": "REJECTED"}, headers=H).status_code == 409
+
+
+def test_rejected_reason_is_stored_and_visible_to_buyer(db_name):
+    _setup()
+    c = _client()
+    reason = "超出质量换退期且无质量故障证据"
+    assert c.post("/internal/v1/aftersales/c/result", json={"result": "REJECTED", "reason": reason}, headers=H).status_code == 200
+    with get_engine().connect() as conn:
+        assert conn.execute(text("select result_reason from aftersale_requests")).scalar() == reason
+    # 重放不覆盖、不报错；无原因的重放不会把已有原因清掉
+    assert c.post("/internal/v1/aftersales/c/result", json={"result": "REJECTED"}, headers=H).status_code == 200
+
+
+def test_reason_is_length_limited_and_optional(db_name):
+    _setup()
+    c = _client()
+    assert c.post("/internal/v1/aftersales/c/result", json={"result": "REJECTED", "reason": "x" * 201}, headers=H).status_code == 400
+    assert c.post("/internal/v1/aftersales/c/result", json={"result": "REJECTED"}, headers=H).status_code == 200
+    with get_engine().connect() as conn:
+        assert conn.execute(text("select result_reason from aftersale_requests")).scalar() is None

@@ -2,7 +2,7 @@
 from typing import Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from pilot.core.auth import require_internal
@@ -14,6 +14,7 @@ router = APIRouter(dependencies=[Depends(require_internal)])
 
 class ResultIn(BaseModel):
     result: Literal["REJECTED", "WITHDRAWN"]
+    reason: str | None = Field(default=None, max_length=200)     # 驳回原因，买家在进度接口里看到
 
 
 @router.post("/internal/v1/aftersales/{claim_no}/result")
@@ -31,5 +32,6 @@ def claim_result(claim_no: str, body: ResultIn):
         if body.result == "WITHDRAWN":
             conn.execute(text("DELETE FROM aftersale_requests WHERE claim_no=:c"), {"c": claim_no})   # 撤回后允许重新申请
         else:
-            conn.execute(text("UPDATE aftersale_requests SET claim_status='REJECTED' WHERE claim_no=:c"), {"c": claim_no})
+            conn.execute(text("UPDATE aftersale_requests SET claim_status='REJECTED', result_reason=:r WHERE claim_no=:c"),
+                         {"c": claim_no, "r": body.reason})
     return {"claim_no": claim_no, "result": body.result, "order_id": order_id}
