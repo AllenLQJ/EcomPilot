@@ -37,3 +37,6 @@
 
 ## 4. 前端 `static/index.html`（C/B 级）
 单文件，无构建；`GET /` 由 Pilot 主 API 提供（`pilot/main.py` 挂载 `static/`）。功能：顶部输入 user_id 获取/粘贴 JWT（开发用：页面提供 `POST /api/v1/dev/token` 调用——**仅当 `ECOMPILOT_DEV_TOKENS=1`**，由统筹实现）、聊天框（fetch + ReadableStream 解析 SSE）、候选订单卡片（含"确认此订单"按钮，点击后带 confirmed_order_id/item_id 再发一轮）、凑单建议卡（复选框 + 调 confirm-addons）、购物车抽屉（本地状态，C 级）。
+
+## NLU `scene_type` 取值（补充）
+Pilot 调用 `/api/v1/nlu/analyze` 时发送 `aftersales`（售后吐槽）或 `shopping`（导购）；桩的 `AFTER_SALE_FEEDBACK` 与 `aftersales` 等价。`PDF_BODY` / `CS_APOLOGY` 返回 `scene_not_applicable=true`。`priority_boost` 仅在售后场景且情感为 NEGATIVE 时为真。

@@ -27,7 +27,7 @@ start() { # name module port
   echo $! > .run/$1.pid
 }
 [ "${SKIP_OPS_STUB:-0}" = 1 ] || start ops_stub stubs.ops_stub:app 8000
-start nlu_stub stubs.nlu_stub:app 8001
+[ "${SKIP_NLU_STUB:-0}" = 1 ] || start nlu_stub stubs.nlu_stub:app 8001
 [ "${SKIP_RAG_STUB:-0}" = 1 ] || start rag_stub stubs.rag_stub:app 8002
 start env_fit pilot.agents.env_fit_agent:app 8011
 start selection pilot.agents.selection_agent:app 8012
@@ -36,7 +36,8 @@ start aftersales pilot.agents.aftersales_agent:app 8014
 start seeding_note pilot.agents.seeding_note_agent:app 8015
 start pilot pilot.main:app 8085
 
-PORTS="8001 8011 8012 8013 8014 8015 8085"
+PORTS="8011 8012 8013 8014 8015 8085"
+[ "${SKIP_NLU_STUB:-0}" = 1 ] || PORTS="8001 $PORTS"
 [ "${SKIP_OPS_STUB:-0}" = 1 ] || PORTS="8000 $PORTS"
 [ "${SKIP_RAG_STUB:-0}" = 1 ] || PORTS="8002 $PORTS"
 for p in $PORTS; do
