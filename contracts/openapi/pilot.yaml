@@ -264,6 +264,18 @@ paths:
       parameters: [{name: refund_idempotency_key, in: query, required: true, schema: {type: string}}]
       responses:
         "200": {description: ok(NOT_FOUND 也是 200), content: {application/json: {schema: {$ref: "#/components/schemas/RefundStatus"}}}}
+  /internal/v1/aftersales/{claim_no}/result:
+    post:
+      summary: EcomOps 回写售后终态（REJECTED/WITHDRAWN）：订单恢复 FULFILLED，幂等
+      security: [{internal: []}]
+      parameters: [{name: claim_no, in: path, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [result], properties: {result: {type: string, enum: [REJECTED, WITHDRAWN]}}}}}
+      responses:
+        "200": {description: ok}
+        "404": {$ref: "#/components/responses/Err"}
+        "409": {$ref: "#/components/responses/Err"}
   /api/v1/chat/stream:
     post:
       summary: "聊天 SSE (event: token|card|done|error)"
