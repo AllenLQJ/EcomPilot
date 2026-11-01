@@ -34,4 +34,9 @@ def make_agent_app(name: str, port: int, skills: list[str], handler: Callable[[d
         except AgentError as e:
             return {"status": "error", "error": {"code": e.code, "message": e.message}}
 
+    # 官方 A2A（a2a-sdk）：与上面的 /a2a/invoke 并存，调用方由 ECOMPILOT_A2A_MODE 选择走哪一个
+    from fastapi import HTTPException
+
+    from pilot.agents import a2a_official
+    a2a_official.mount(app, name, port, skills, handler, AgentError, HTTPException)
     return app

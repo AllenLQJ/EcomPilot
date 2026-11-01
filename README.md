@@ -73,3 +73,8 @@ scripts/start_all.sh && scripts/start_protocols.sh        # A2A 网关 :8090/<ag
 ```
 
 SDK 需要比主栈更新的 pydantic/starlette，因此单独的 `.venv-proto`；主栈依赖不变。详见 `docs/决策记录.md` 第 11 条。协议层没有认证，只绑定本机。
+
+## 内部 A2A 协议（补充）
+
+代理之间、聊天服务调用代理默认走官方 A2A（a2a-sdk 0.3，JSON-RPC：`POST /a2a/rpc`，Agent Card 在 `/.well-known/agent-card.json`）。
+设 `ECOMPILOT_A2A_MODE=legacy` 回到旧的 `/a2a/invoke`（两个端点都保留）。对外的官方网关（SDK 1.x）见上面的"官方 MCP / A2A 协议层"。
