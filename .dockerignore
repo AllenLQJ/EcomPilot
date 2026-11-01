@@ -1,0 +1,9 @@
+.venv
+.venv-proto
+.run
+.git
+.env
+__pycache__
+*.pyc
+tests
+docs
