@@ -26,9 +26,9 @@ start() { # name module port
   nohup $PY -m uvicorn "$2" --port "$3" --log-level warning > .run/$1.log 2>&1 &
   echo $! > .run/$1.pid
 }
-start ops_stub stubs.ops_stub:app 8000
+[ "${SKIP_OPS_STUB:-0}" = 1 ] || start ops_stub stubs.ops_stub:app 8000
 start nlu_stub stubs.nlu_stub:app 8001
-start rag_stub stubs.rag_stub:app 8002
+[ "${SKIP_RAG_STUB:-0}" = 1 ] || start rag_stub stubs.rag_stub:app 8002
 start env_fit pilot.agents.env_fit_agent:app 8011
 start selection pilot.agents.selection_agent:app 8012
 start pricing_order pilot.agents.pricing_order_agent:app 8013
@@ -36,7 +36,10 @@ start aftersales pilot.agents.aftersales_agent:app 8014
 start seeding_note pilot.agents.seeding_note_agent:app 8015
 start pilot pilot.main:app 8085
 
-for p in 8000 8001 8002 8011 8012 8013 8014 8015 8085; do
+PORTS="8001 8011 8012 8013 8014 8015 8085"
+[ "${SKIP_OPS_STUB:-0}" = 1 ] || PORTS="8000 $PORTS"
+[ "${SKIP_RAG_STUB:-0}" = 1 ] || PORTS="8002 $PORTS"
+for p in $PORTS; do
   for i in $(seq 1 30); do curl -sf "http://127.0.0.1:$p/health" >/dev/null && break; sleep 1; done
   curl -sf "http://127.0.0.1:$p/health" >/dev/null && echo "up :$p" || { echo "FAILED :$p (see .run/*.log)"; exit 1; }
 done
