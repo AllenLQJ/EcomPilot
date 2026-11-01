@@ -11,6 +11,8 @@ from pydantic import BaseModel
 
 from pilot.core.auth import issue_token
 from pilot.core.db import get_engine
+from pilot.core import hardening, observability
+from pilot.core.config import get_settings
 from pilot.core.errors import install_error_handlers
 from pilot.orders import service
 from pilot.orders.router import router as orders_router
@@ -27,6 +29,7 @@ async def _expire_loop():
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    hardening.enforce(get_settings())
     task = asyncio.create_task(_expire_loop())
     yield
     task.cancel()
@@ -34,6 +37,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="EcomPilot", lifespan=lifespan)
 install_error_handlers(app)
+observability.install(app)
 app.include_router(orders_router)
 for _mod in ("pilot.refunds.router", "pilot.aftersales.router", "pilot.aftersales.internal", "pilot.chat.router"):
     try:

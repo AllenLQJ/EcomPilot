@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ECOMPILOT_", env_file=".env", extra="ignore")
 
+    env: str = "dev"                      # prod 时启动自检会拒绝开发默认密钥，见 pilot/core/hardening.py
     db_host: str = "127.0.0.1"
     db_port: int = 3307
     db_user: str = "root"
