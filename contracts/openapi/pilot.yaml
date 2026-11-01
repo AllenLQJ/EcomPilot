@@ -273,7 +273,7 @@ paths:
             schema:
               type: object
               required: [session_id, message]
-              properties: {session_id: {type: string}, message: {type: string}, confirmed_order_id: {type: string}}
+              properties: {session_id: {type: string}, message: {type: string}, confirmed_order_id: {type: string}, confirmed_order_item_id: {type: string}}
       responses:
         "200": {description: text/event-stream, content: {text/event-stream: {schema: {type: string}}}}
         "403": {$ref: "#/components/responses/Err"}
