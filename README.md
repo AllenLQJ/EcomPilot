@@ -62,3 +62,14 @@ npm run docs:render
 文档中的端口、内部 API 路径和服务名称是架构约定，不是已部署服务地址。后续开发应通过环境配置提供数据库连接、对象存储和各服务端点。
 
 对象存储链接使用保留示例域名，仅作数据结构演示。本机路径、真实地址、凭据和环境覆盖配置不应提交到仓库。
+
+
+## 官方 MCP / A2A 协议层（可选，独立环境）
+
+```bash
+uv venv --python 3.12 .venv-proto && uv pip install --python .venv-proto/bin/python -r requirements-protocols.txt
+scripts/start_all.sh && scripts/start_protocols.sh        # A2A 网关 :8090/<agent>/，MCP streamable-http :8091/mcp
+.venv-proto/bin/python -m pytest -c pytest-protocols.ini   # 协议层测试
+```
+
+SDK 需要比主栈更新的 pydantic/starlette，因此单独的 `.venv-proto`；主栈依赖不变。详见 `docs/决策记录.md` 第 11 条。协议层没有认证，只绑定本机。
