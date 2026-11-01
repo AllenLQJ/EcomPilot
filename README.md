@@ -2,7 +2,40 @@
 
 电商智能体系统的架构规格、业务流程与数据模型文档。
 
-当前处于架构设计阶段，包含路线图和 14 张图表，尚未包含可运行的业务服务。文档描述的是目标方案，不代表功能已经实现。
+包含架构规格（路线图与 14 张图表）以及项目三 EcomPilot（C 端交易与导购）的可运行实现。
+实现深度分级与未完成项见 [交付报告](docs/交付报告.md)；EcomNLU / EcomRAG / EcomOps 为桩服务，不是真实实现。
+
+## 运行
+
+前置：Docker、`uv`。
+
+```sh
+uv venv --python 3.12 .venv && uv pip install -r requirements.txt --python .venv/bin/python
+./scripts/start_all.sh      # MySQL(3307) + 3 桩 + 5 代理 + Pilot 主 API，首次自动建库导入 schema/seed
+./scripts/smoke.sh          # 全链路冒烟（下单→支付→发货→售后→超时对账→退款）
+./scripts/stop_all.sh       # 停服务（DOWN_DB=1 同时停 MySQL）
+```
+
+浏览器打开 http://127.0.0.1:8085/ 即聊天界面（启动脚本已设 `ECOMPILOT_DEV_TOKENS=1`，可在页面获取开发令牌）。`RESET_DB=1 ./scripts/start_all.sh` 重置库。
+
+| 端口 | 服务 |
+|---|---|
+| 8085 | Pilot 主 API（订单/报价/售后/退款内部接口/聊天 SSE/前端） |
+| 8011~8015 | env_fit / selection / pricing_order / aftersales / seeding_note 代理 |
+| 8000 / 8001 / 8002 | Ops / NLU / RAG 桩 |
+| 3307 | MySQL 8.0（docker） |
+
+环境变量（前缀 `ECOMPILOT_`，示例见 `deploy/.env.example`）：`DB_HOST/PORT/USER/PASSWORD/NAME`、`JWT_SECRET`、`INTERNAL_TOKEN`、`NLU_URL/RAG_URL/OPS_URL`、`PILOT_URL`、`AGENT_*_URL`、`DEV_TOKENS`。
+
+## 测试
+
+```sh
+.venv/bin/python -m pytest tests -q            # 全量：unit + acceptance + oracle + e2e（需 MySQL 已启动）
+.venv/bin/python -m pytest tests/acceptance -q # AC-TX-01~04(C 端)、AC-SEC-01、契约一致性
+.venv/bin/python scripts/hardening_check.py    # 对运行中的栈做故障注入（需先 start_all）
+```
+
+每个测试用独立库 `ecompilot_test_<uuid8>`，结束删除。契约在 `contracts/`（OpenAPI、schema、错误码、模块与代理接口）。
 
 ## 阅读入口
 
