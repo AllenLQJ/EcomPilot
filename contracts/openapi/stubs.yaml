@@ -1,0 +1,84 @@
+openapi: 3.0.3
+info: {title: EcomPilot 外部依赖桩 (NLU/RAG/Ops), version: 1.0.0}
+paths:
+  /api/v1/nlu/analyze:
+    post:
+      summary: "NLU 桩 :8001"
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [text], properties: {text: {type: string}, scene_type: {type: string}}}}}
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [clauses, sentiment, sentiment_score, priority_boost]
+                properties:
+                  clauses:
+                    type: array
+                    items:
+                      type: object
+                      properties: {text: {type: string}, predicted_label: {type: string}, category_confidence: {type: number}, catalog_category_hint: {type: string, nullable: true}, brand_hint: {type: string, nullable: true}, item_type: {type: string}}
+                  sentiment: {type: string}
+                  sentiment_score: {type: number}
+                  priority_boost: {type: boolean}
+                  scene_not_applicable: {type: boolean}
+  /api/v1/rag/search:
+    post:
+      summary: "RAG 桩 :8002"
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [query], properties: {query: {type: string}, catalog_category_id: {type: string}, top_k: {type: integer}}}}}
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [hits]
+                properties:
+                  hits: {type: array, items: {type: object, properties: {chunk_id: {type: string}, text: {type: string}, rule_source: {type: string}, is_demo_rule: {type: boolean}, score: {type: number}}}}
+  /internal/v1/claims/submit:
+    post:
+      summary: "Ops 桩 :8000, 幂等写入 claim_tickets; 契约见路线图 4.2-1"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [claim_no, tenant_id, user_id, order_id, order_item_id, sku_id, max_refundable_cents]
+              properties:
+                claim_no: {type: string}
+                tenant_id: {type: string}
+                user_id: {type: string}
+                order_id: {type: string}
+                order_item_id: {type: string}
+                sku_id: {type: string}
+                catalog_category_id: {type: string}
+                item_payable_cents: {type: integer}
+                max_refundable_cents: {type: integer}
+                days_since_delivery: {type: integer}
+                claim_type: {type: string}
+                buyer_reason_text: {type: string}
+                evidence_urls: {type: array, items: {type: string}}
+                nlu_signal: {type: object}
+      responses:
+        "202":
+          description: accepted
+          content: {application/json: {schema: {type: object, required: [claim_no, status], properties: {claim_no: {type: string}, status: {type: string}}}}}
+  /stub/admin/fault:
+    post:
+      summary: "故障注入: mode=none|refund_callback_timeout|duplicate_callback|submit_fail"
+      requestBody:
+        content: {application/json: {schema: {type: object, properties: {mode: {type: string}}}}}
+      responses: {"200": {description: ok}}
+  /stub/admin/approve:
+    post:
+      summary: "模拟主管批准: 桩按 fault 模式回调 Pilot /internal/v1/refunds/execute"
+      requestBody:
+        content: {application/json: {schema: {type: object, required: [claim_no], properties: {claim_no: {type: string}, approved_refund_cents: {type: integer}}}}}
+      responses: {"200": {description: ok}}

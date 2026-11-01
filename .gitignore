@@ -11,3 +11,8 @@ Thumbs.db
 .vscode/
 *.pem
 *.key
+
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
