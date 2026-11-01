@@ -112,7 +112,7 @@ def confirm(body: ConfirmIn, identity: Identity = Depends(current_identity)):
         "sku_id": item["sku_id"], "catalog_category_id": item["catalog_category_id"],
         "item_payable_cents": item["payable_cents"],
         "max_refundable_cents": item["payable_cents"] - item["refunded_cents"],
-        "days_since_delivery": (datetime.now() - order["fulfilled_at"]).days if order["fulfilled_at"] else 0,
+        "days_since_delivery": max(0, (datetime.now() - order["fulfilled_at"]).days) if order["fulfilled_at"] else 0,
         "claim_type": "QUALITY_REFUND", "buyer_reason_text": body.buyer_reason_text,
         "evidence_urls": body.evidence_urls, "nlu_signal": signal,
     }
