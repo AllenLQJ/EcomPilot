@@ -4,7 +4,7 @@ from hashlib import sha1
 
 import httpx
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import text
 
 from pilot.core.auth import Identity, current_identity
@@ -131,3 +131,64 @@ def confirm(body: ConfirmIn, identity: Identity = Depends(current_identity)):
             raise ApiError(504, "UPSTREAM_TIMEOUT", "Ops submission timed out") from exc
         raise ApiError(502, "UPSTREAM_ERROR", "Ops submission failed") from exc
     return {"claim_no": claim_no, "claim_status": "SUBMITTED", "order_status": "AFTER_SALE_OPEN"}
+
+
+class EvidenceIn(BaseModel):
+    evidence_urls: list[str] = Field(min_length=1, max_length=10)
+
+    @field_validator("evidence_urls")
+    @classmethod
+    def _urls(cls, urls: list[str]) -> list[str]:
+        for url in urls:
+            if not (url.startswith(("http://", "https://")) and len(url) <= 1024):
+                raise ValueError("evidence url must be http(s) and at most 1024 chars")
+        return urls
+
+
+def _own_claim(conn, claim_no: str, identity: Identity):
+    row = conn.execute(text("""SELECT a.claim_no, a.order_id, a.order_item_id, a.claim_status, o.order_status
+        FROM aftersale_requests a JOIN orders o ON o.order_id=a.order_id
+        WHERE a.claim_no=:claim AND a.tenant_id=:tenant AND a.user_id=:user"""),
+        {"claim": claim_no, "tenant": identity.tenant_id, "user": identity.user_id}).mappings().first()
+    if row is None:
+        raise ApiError(404, "NOT_FOUND", "aftersale not found")   # 他人的申请与不存在一视同仁，防枚举
+    return dict(row)
+
+
+def _ops_call(method: str, path: str, **kwargs):
+    try:
+        with httpx.Client(timeout=3.0) as client:
+            response = client.request(method, get_settings().ops_url.rstrip("/") + path,
+                                      headers={"X-Internal-Token": get_settings().internal_token}, **kwargs)
+    except httpx.TimeoutException as exc:
+        raise ApiError(504, "UPSTREAM_TIMEOUT", "Ops request timed out") from exc
+    except httpx.HTTPError as exc:
+        raise ApiError(502, "UPSTREAM_ERROR", "Ops request failed") from exc
+    if response.status_code == 404:
+        raise ApiError(404, "NOT_FOUND", "aftersale not found")
+    if response.status_code == 409:
+        raise ApiError(409, "INVALID_ORDER_STATE", "aftersale is not waiting for more evidence")
+    if response.status_code >= 400:
+        raise ApiError(502, "UPSTREAM_ERROR", "Ops request failed")
+    return response.json()
+
+
+@router.get("/{claim_no}")
+def claim_status(claim_no: str, identity: Identity = Depends(current_identity)):
+    with get_engine().connect() as conn:
+        mine = _own_claim(conn, claim_no, identity)
+    try:
+        ops = _ops_call("GET", f"/internal/v1/claims/{claim_no}/status")
+    except ApiError:
+        ops = None      # Ops 暂不可用时只给本地视图，不让买家看到 5xx
+    return {"claim_no": claim_no, "order_id": mine["order_id"], "order_status": mine["order_status"],
+            "claim_status": ops["claim_status"] if ops else mine["claim_status"],
+            "needs_evidence": bool(ops and ops.get("needs_evidence")), "ops_available": ops is not None}
+
+
+@router.post("/{claim_no}/evidence", status_code=202)
+def add_evidence(claim_no: str, body: EvidenceIn, identity: Identity = Depends(current_identity)):
+    with get_engine().connect() as conn:
+        _own_claim(conn, claim_no, identity)
+    result = _ops_call("POST", f"/internal/v1/claims/{claim_no}/evidence", json={"evidence_urls": body.evidence_urls})
+    return {"claim_no": claim_no, "claim_status": result.get("status", "SUBMITTED")}

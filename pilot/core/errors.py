@@ -19,4 +19,6 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _val(_: Request, e: RequestValidationError):
-        return JSONResponse(_body("INVALID_REQUEST", "invalid request", {"errors": e.errors()[:5]}), status_code=400)
+        return JSONResponse(_body("INVALID_REQUEST", "invalid request", {"errors": [
+            {"loc": list(x.get("loc", ())), "msg": x.get("msg"), "type": x.get("type")} for x in e.errors()[:5]]}),
+            status_code=400)   # 不带 ctx/input：自定义校验器抛出的异常对象无法 JSON 序列化，也不应回显输入

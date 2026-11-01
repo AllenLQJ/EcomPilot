@@ -247,6 +247,33 @@ paths:
         "404": {$ref: "#/components/responses/Err"}
         "409": {$ref: "#/components/responses/Err"}
         "502": {$ref: "#/components/responses/Err"}
+  /api/v1/aftersales/{claim_no}:
+    get:
+      summary: 买家查询自己售后申请的进度（审核端状态来自 Ops；Ops 不可用时返回本地状态并标 ops_available=false）
+      parameters: [{name: claim_no, in: path, required: true, schema: {type: string}}]
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {type: object, required: [claim_no, order_id, order_status, claim_status, needs_evidence, ops_available], properties: {claim_no: {type: string}, order_id: {type: string}, order_status: {type: string}, claim_status: {type: string}, needs_evidence: {type: boolean}, ops_available: {type: boolean}}}}}}
+        "404": {$ref: "#/components/responses/Err"}
+  /api/v1/aftersales/{claim_no}/evidence:
+    post:
+      summary: 买家补充凭证（仅在审核端状态为 NEED_MORE_EVIDENCE 时有效，转发至 Ops 并触发重新审核）
+      parameters: [{name: claim_no, in: path, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [evidence_urls]
+              properties:
+                evidence_urls: {type: array, minItems: 1, maxItems: 10, items: {type: string, description: "http(s)，≤1024 字符"}}
+      responses:
+        "202": {description: accepted, content: {application/json: {schema: {type: object, required: [claim_no, claim_status], properties: {claim_no: {type: string}, claim_status: {type: string}}}}}}
+        "400": {$ref: "#/components/responses/Err"}
+        "404": {$ref: "#/components/responses/Err"}
+        "409": {$ref: "#/components/responses/Err"}
+        "502": {$ref: "#/components/responses/Err"}
+        "504": {$ref: "#/components/responses/Err"}
   /internal/v1/refunds/execute:
     post:
       security: [{internal: []}]

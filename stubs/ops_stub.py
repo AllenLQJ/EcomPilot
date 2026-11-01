@@ -54,6 +54,34 @@ def submit(body: ClaimIn):
     return {"claim_no": body.claim_no, "status": "SUBMITTED"}
 
 
+@app.get("/internal/v1/claims/{claim_no}/status")
+def claim_status(claim_no: str):
+    with state_lock:
+        claim = claims.get(claim_no)
+    if claim is None:
+        raise HTTPException(404, "claim not found")
+    status = claim.get("claim_status", "SUBMITTED")
+    return {"claim_no": claim_no, "claim_status": status, "audit_round": 1,
+            "needs_evidence": status == "NEED_MORE_EVIDENCE", "evidence_count": len(claim.get("evidence_urls") or [])}
+
+
+class EvidenceIn(BaseModel):
+    evidence_urls: list[str] = Field(min_length=1)
+
+
+@app.post("/internal/v1/claims/{claim_no}/evidence", status_code=202)
+def add_evidence(claim_no: str, body: EvidenceIn):
+    with state_lock:
+        claim = claims.get(claim_no)
+        if claim is None:
+            raise HTTPException(404, "claim not found")
+        if claim.get("claim_status") != "NEED_MORE_EVIDENCE":
+            raise HTTPException(409, "claim is not waiting for evidence")
+        claim["evidence_urls"] = list(claim.get("evidence_urls") or []) + body.evidence_urls
+        claim["claim_status"] = "SUBMITTED"
+    return {"claim_no": claim_no, "status": "SUBMITTED"}
+
+
 @app.get("/stub/admin/claims")
 def list_claims():
     with state_lock:
