@@ -1,0 +1,24 @@
+flowchart TD
+    START(["POST /api/v1/orders/create\n(携带 JWT, idempotency_key, quote_id)"]) --> IDEM_CHECK{"查询 orders 表:\nidempotency_key 是否已存在?"}
+    IDEM_CHECK -->|"已存在 (重复提交/网络重试)"| RET_EXISTING["直接返回已有订单快照 (200 OK, idempotent_replayed=True)\n绝不重复扣减库存"]
+    IDEM_CHECK -->|"不存在"| QUOTE_CHECK{"查询 price_quotes 表校验 quote_id:\n1. 归属当前 jwt_user_id?\n2. now <= expires_at (15分钟内)?\n3. 重新核算实时商品价与券规则是否一致?"}
+
+    QUOTE_CHECK -->|"报价过期或价格已变动"| ERR_QUOTE["返回 409 QUOTE_EXPIRED_OR_CHANGED\n附上最新重算报价请用户重新确认"]
+    QUOTE_CHECK -->|"核价通过"| INIT_RETRY["初始化乐观锁重试计数器 retry_count = 0\n开启 MySQL 数据库事务 BEGIN"]
+
+    INIT_RETRY --> READ_SKU["遍历订单内各 sku_id:\nSELECT sellable_stock, version FROM products_sku WHERE sku_id = :sku"]
+    READ_SKU --> STOCK_ENOUGH{"检查当前可售库存:\nsellable_stock >= required_qty ?"}
+
+    STOCK_ENOUGH -->|"否 (真实库存不足)"| ROLLBACK_OOS["ROLLBACK 事务\n写入失败记录并返回 422 INSUFFICIENT_STOCK\n(此时才允许引导 selection_agent 推荐同品类替代品)"]
+    STOCK_ENOUGH -->|"是 (库存充足)"| OPT_UPDATE["执行带版本号的乐观锁更新:\nUPDATE products_sku\nSET sellable_stock = sellable_stock - :qty, version = version + 1\nWHERE sku_id = :sku AND version = :ver AND sellable_stock >= :qty"]
+
+    OPT_UPDATE --> ROW_CHECK{"检查受影响行数 rowcount == 1 ?"}
+    ROW_CHECK -->|"rowcount == 0 (并非缺货, 而是并发版本冲突!)"| RETRY_JUDGE{"ROLLBACK 当前尝试\n检查 retry_count < 3 ?"}
+    RETRY_JUDGE -->|"是"| SLEEP_RETRY["retry_count += 1\n指数退避等待 (20ms / 50ms / 100ms)"] --> READ_SKU
+    RETRY_JUDGE -->|"否 (重试3次仍冲突)"| ERR_CONFLICT["返回 503 CONCURRENT_VERSION_CONFLICT\n提示系统繁忙请稍后再试 (严禁误报为缺货!)"]
+
+    ROW_CHECK -->|"所有 SKU 均扣减成功"| LOCK_COUPON["锁定用户优惠券:\nUPDATE user_coupons SET status='LOCKED', order_id=:oid\nWHERE user_coupon_id IN (:cids) AND status='UNUSED'"]
+    LOCK_COUPON --> COUPON_OK{"优惠券锁定成功?"}
+    COUPON_OK -->|"否 (券已被其他订单占用)"| ROLLBACK_CPN["ROLLBACK 事务\n返回 409 COUPON_UNAVAILABLE"]
+    COUPON_OK -->|"是"| INSERT_ORD["写入 orders 与 order_items 表\n(状态 STOCK_LOCKED, 金额全部精确到分 cents)\nCOMMIT 提交事务"]
+    INSERT_ORD --> END_OK(["返回 201 Created 订单详情与模拟支付入口"])

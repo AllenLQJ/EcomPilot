@@ -1,0 +1,22 @@
+flowchart TD
+    A["B 端主管点击批准 / 自动审批通过"] --> B["EcomOps 开启本地 PostgreSQL 事务:\n1. 更新 claim_tickets 状态为 APPROVED_PENDING_CALLBACK\n2. 插入 outbox_events 记录 (携带唯一键 refund_idempotency_key = 'REFUND_' + claim_no + '_V1')\n3. 提交 PG 事务"]
+    B --> C["调用 EcomPilot 内部接口:\nPOST /internal/v1/refunds/execute\nHeader/Body 携带 refund_idempotency_key"]
+
+    C --> D{"EcomPilot (MySQL) 收到请求?"}
+    D -->|"请求未到达 (连接断开)"| E["EcomOps 捕获 ConnectError / Timeout\n保持 outbox 状态为 PENDING_RETRY"]
+    D -->|"请求已到达 EcomPilot"| F["EcomPilot 开启 MySQL 事务:\n查询 refund_executions 表 WHERE idempotency_key = :key"]
+
+    F --> G{"该 idempotency_key 是否已存在?"}
+    G -->|"已存在且 status='SUCCESS'"| H["直接返回已有执行结果 (200 OK, idempotent_replayed=True)\n绝不重复退款!"]
+    G -->|"不存在 (首次执行)"| I["1. 插入 refund_executions (唯一索引 idempotency_key)\n2. 按分摊规则更新 orders 状态为 REFUNDED_FULL / PARTIAL\n3. 质量退货增加 defective_stock\n4. 提交 MySQL 事务"]
+
+    I --> J{"响应返回给 EcomOps 时网络是否超时?"}
+    J -->|"正常返回 200 OK"| K["EcomOps 收到成功响应:\n更新 PG claim_tickets 为 COMPLETED\n更新 outbox_events 为 DONE"]
+    J -->|"MySQL 已提交, 但响应中途断网超时!"| E
+
+    E --> L["EcomOps 后台 Outbox 对账协程 (每 30 秒扫描 PENDING_RETRY 记录)"]
+    L --> M["先调用 EcomPilot 对账查询接口:\nGET /internal/v1/refunds/status?refund_idempotency_key=:key"]
+    M --> N{"查询到的真实退款执行状态?"}
+    N -->|"status == 'SUCCESS'\n(说明上次超时前 MySQL 其实已经退成功了!)"| K
+    N -->|"status == 'NOT_FOUND'\n(说明上次请求根本没落库)"| C
+    N -->|"超过最大重试次数 (如 10 次) 仍失败"| O["更新 PG 状态为 CALLBACK_FAILED_MANUAL\n触发运营告警台人工介入"]

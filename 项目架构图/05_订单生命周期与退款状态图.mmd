@@ -1,0 +1,20 @@
+stateDiagram-v2
+    [*] --> QUOTE_GENERATED : 凑单算价完成\n生成 quote_id (有效期15分钟)
+    QUOTE_GENERATED --> CREATED : 提交下单请求\n(校验 idempotency_key 与报价未过期)
+    QUOTE_GENERATED --> [*] : 报价超时失效
+
+    CREATED --> CLOSED_OUT_OF_STOCK : sellable_stock < 购买数量\n(真实缺货)
+    CREATED --> STOCK_LOCKED : 乐观锁扣减 sellable_stock 成功\n优惠券状态 UNUSED -> LOCKED
+
+    STOCK_LOCKED --> CANCELLED : 买家主动取消 / 15分钟未支付超时\n(WHERE status='STOCK_LOCKED' 幂等加回可售库存并释放券)
+    STOCK_LOCKED --> PAID_SIMULATED : 模拟支付网关确认成功\n优惠券状态 LOCKED -> USED
+
+    PAID_SIMULATED --> REFUNDED_FULL : 未发货整单取消\n(模拟全额退款 + 加回 sellable_stock + 退回整单券)
+    PAID_SIMULATED --> FULFILLED : 商家发货 / 酒店确认入住
+
+    FULFILLED --> AFTER_SALE_OPEN : 买家确认订单子项并发起售后\n提交工单至 B 端 EcomOps
+    AFTER_SALE_OPEN --> FULFILLED : B 端审核驳回 / 买家主动撤回售后
+
+    AFTER_SALE_OPEN --> REFUNDING : 收到 EcomOps 批准回调\n(校验 refund_idempotency_key 唯一)
+    REFUNDING --> REFUNDED_PARTIAL : 单品/部分退赔成功\n(按实付占比分摊优惠, 质量退货入次品仓 defective_stock)
+    REFUNDING --> REFUNDED_FULL : 整单全额退赔成功\n(质量退货入 defective_stock, 不加回可售库存)

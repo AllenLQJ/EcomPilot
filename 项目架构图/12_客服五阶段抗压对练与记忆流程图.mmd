@@ -1,0 +1,19 @@
+flowchart TD
+    START(["客服发送一轮回复 POST /api/v1/training/sessions/{id}/chat/stream"]) --> LOAD["load_context 节点:\n从 AsyncPostgresSaver 加载多轮状态\n读取关联的 training_scenario_seed (商品痛点) 与历史摘要"]
+
+    LOAD --> STAGE_CHK{"check_stage 节点:\n检查当前所处客诉实训阶段"}
+
+    STAGE_CHK -->|"阶段 1: verify_order (核实身份与订单)\n阶段 2: empathy_listen (情绪安抚与倾听)\n阶段 3: policy_explain (基于 EcomRAG 解释规则)\n阶段 4: solution_negotiate (退换/阶梯补偿协商)"| EVAL["evaluate_answer 节点:\n1. 核对客服引用的售后规则是否符合 EcomRAG 条款\n2. 检查沟通礼貌度与安抚有效性 (不误杀'抱歉'等礼貌词)\n3. 判断当前阶段目标是否达成 (同一争议点最多追问 2 次)"]
+
+    EVAL --> NEXT_DEC{"是否推进至下一阶段?"}
+    NEXT_DEC -->|"未达成且追问 < 2 次"| KEEP_STAGE["保持当前阶段, 追问计数器 follow_up_count += 1"]
+    NEXT_DEC -->|"已达成 或 追问已满 2 次"| ADV_STAGE["推进 stage 至下一阶段 (若第4阶段完成则置为 finished)"]
+
+    KEEP_STAGE & ADV_STAGE --> IS_FIN_NOW{"推进后 stage == 'finished' ?"}
+    IS_FIN_NOW -->|"否 (继续扮演挑剔买家对话)"| GEN_RESP["generate_response 节点:\n显式启用 get_llm('interview', streaming=True)\n按当前阶段扮演挑剔买家发起质询并逐 token 流式推送"]
+
+    STAGE_CHK -->|"stage == 'finished'"| GEN_REP["generate_report 节点:\n汇总整场对练的规则准确度、情绪安抚力、方案合规度评分报告"]
+    IS_FIN_NOW -->|"是"| GEN_REP
+    GEN_REP --> SAVE_REP["save_report 节点:\n写入 PostgreSQL training_sessions 表"]
+
+    GEN_RESP & SAVE_REP --> SAVE_MEM["save_memory 节点 (已修复原项目两大记忆缺陷):\n1. 先将本轮 AI 回复追加进完整 messages 列表\n2. 判断 len(messages) % (threshold * 2) == 0 (偶数轮精准触发摘要)\n3. 无论是否触发摘要, 每轮均执行数据库 UPSERT 保存最新状态"] --> END_TURN(["本轮 SSE 流结束, 等待客服下一轮输入"])

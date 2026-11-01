@@ -1,0 +1,31 @@
+flowchart LR
+    subgraph Main_Orchestrator["chat_service.py 核心调度器"]
+        U_QUERY["用户跨品类采购需求\n(如: 去杭州出差住两晚+买平板+带洗发水和牛奶)"] --> PARSE["拆解必买子需求 + 提取预算上限"]
+    end
+
+    subgraph Tier1_Agents["第一层：A2A 领域执行代理并行协作"]
+        PARSE -->|A2A| ENV["env_fit_agent (:8011)\n调天气工具查杭州气温湿度\n输出穿搭厚度与洗护规格建议"]
+        PARSE -->|A2A| SEL["selection_agent (:8012)\n调 EcomNLU 获取类目/品牌提示\n从 Milvus + MySQL 召回必买候选 SKU"]
+        SEL --> PRI["pricing_order_agent (:8013)\n调用 bundle_math_tools.py 受控凑单器"]
+    end
+
+    subgraph Controlled_Bundling["bundle_math_tools.py 受控凑单算法 (确定性穷举)"]
+        B1["1. 按优惠前原价小计 (cents)\n匹配 1 张最优品类券 + 1 档跨店满减\n(按 shop_id 汇总参与满减金额)"] --> B2{"2. 距离下一档满减门槛差额\n0 < gap_cents <= 4000分(40元)?"}
+        B2 -->|"否"| B_DIRECT["直接输出当前必买组合报价 quote_id"]
+        B2 -->|"是"| B3["3. 从预设 <=15 件高好评日常凑单池中\n穷举挑选 1~2 件商品组合 (最多 C(15,1)+C(15,2)=120 种)"]
+        B3 --> B4{"4. 检查加购后实付:\npayable_with_addon < payable_without_addon?"}
+        B4 -->|"是 (凑单倒省钱)"| B_SUGGEST["生成必买报价单 + suggested_addons 凑单建议卡\n(必须经用户勾选确认才加入结算单)"]
+        B4 -->|"否"| B_DIRECT
+    end
+
+    PRI --> B1
+
+    subgraph Tier2_Seeding["第二层：seeding_note_agent 小红书种草代理 (:8015 二级 A2A 协作)"]
+        SEED_IN["收到生成采购/开箱种草清单指令"] -->|二级 A2A 调用| ENV
+        SEED_IN -->|二级 A2A 调用: 拉取商品参数与正向买家评论| SEL
+        SEED_IN -->|二级 A2A 调用: 拉取凑单省钱公式明细| PRI
+        SEED_IN --> IMG["调用 MCP 多图源回退工具\n(商品主图 -> 备选图库 -> 品类默认图)"]
+        IMG --> NOTE_OUT["汇总生成带真实口碑引用的小红书多图种草卡片"]
+    end
+
+    B_DIRECT & B_SUGGEST --> SEED_IN

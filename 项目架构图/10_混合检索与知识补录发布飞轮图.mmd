@@ -1,0 +1,34 @@
+flowchart TD
+    subgraph Online_QA["在线问答流：EcomOps kb_qa LangGraph 调用 EcomRAG"]
+        Q_IN["用户/客服输入问题 query + tenant_id + catalog_category_id"] --> N_CLS["classify_query 节点:\n规则 + 电商术语 + 微调分类器判定问题类型"]
+        N_CLS -->|"GENERAL (日常闲聊/通用问题)"| GEN_DIRECT["generate_general 节点"]
+        N_CLS -->|"PRECISE (精确条款, top_k=8)"| CALL_RAG["调用 EcomRAG (:8002) 检索接口"]
+        N_CLS -->|"VAGUE (模糊表达)"| HYDE["hyde_generate 生成假设性售后条款文档 (top_k=10)"] --> CALL_RAG
+        N_CLS -->|"BROAD (宽泛多问)"| MULTI["multi_query_rewrite 拆解至多3路子查询并发 (各召回4条)"] --> CALL_RAG
+
+        subgraph EcomRAG_Engine["EcomRAG (:8002) 唯一混合检索与精排引擎"]
+            CALL_RAG --> BGE["BGE-M3 编码 1024维 Dense + Lexical Sparse"]
+            BGE --> MV_SEARCH["Milvus knowledge_domain 两路召回:\n标量过滤: tenant_id & catalog_category_id & effective_from<=now<=effective_to\nWeightedRanker(0.7, 0.3) 粗排融合"]
+            MV_SEARCH --> RERANK["CrossEncoder (bge-reranker-v2-m3) 配对精排\n输出 Top-3 片段及最高精排分数 top1_score"]
+        end
+
+        RERANK --> SCORE_CHECK{"top1_score >= 0.75 ?"}
+        SCORE_CHECK -->|"是 (高置信命中)"| GEN_RAG["generate_rag 节点:\n流式生成回答并附带 [rule_source / 版本 / 沙盒演示标记]"]
+        SCORE_CHECK -->|"否 (<0.75 低置信) 且开启联网"| WEB_MCP["web_search 节点:\n调用 Web Search MCP (Tavily -> DuckDuckGo 回退)"] --> GEN_LOW["generate_direct 低分兜底回答"]
+        SCORE_CHECK -->|"否 (<0.75 低置信) 且未开启联网"| GEN_LOW
+        GEN_LOW --> ENQ["enqueue_pending 节点:\n将问题写入 PG knowledge_pending_queue\n初始状态: PENDING_REVIEW"]
+        GEN_RAG & GEN_DIRECT & ENQ --> SAVE_MEM["save_memory 节点 (已修复缩进与计数 Bug):\n1. 每轮必定 UPSERT 更新 qa_sessions\n2. 合入 AI 回复后满偶数轮 (20条消息) 触发摘要"]
+    end
+
+    subgraph Offline_Flywheel["知识补录飞轮：PG 状态机 + EcomRAG 幂等 Upsert (跨存储最终一致)"]
+        ENQ -.-> OP_UI["运营在 Vue 3『知识待补充页』查看 PENDING_REVIEW 记录"]
+        OP_UI --> OP_ACT{"运营审核操作"}
+        OP_ACT -->|"判定为无效/重复提问"| DISCARD["更新 PG 状态为 DISCARDED"]
+        OP_ACT -->|"填写标准解答、适用类目、规则来源、生效期并点击发布"| TX_PUB["1. 开启 PG 事务:\n保存答案草稿，递增 version\n计算确定性主键 chunk_id = sha256(queue_id + ':' + version)\n状态置为 PUBLISHING 并提交 PG"]
+        TX_PUB --> CALL_UPSERT["2. 调用 EcomRAG 内部发布接口:\nPOST /internal/v1/kb/upsert (携带确定性 chunk_id)"]
+        CALL_UPSERT --> RAG_WRITE["EcomRAG 调用 BGE-M3 生成向量\n按主键 chunk_id 执行 Milvus Upsert (天然幂等覆盖)"]
+        RAG_WRITE --> WRITE_OK{"Milvus Upsert 是否成功?"}
+        WRITE_OK -->|"成功返回 milvus_pk"| PG_OK["3. 回写 PG 状态为 PUBLISHED\nC 端与 B 端检索立即同步生效!"]
+        WRITE_OK -->|"超时或异常"| PG_FAIL["3. 回写 PG 状态为 PUBLISH_FAILED (记录错误原因)\n支持运营一键重试或定时重试 (相同 chunk_id 绝不产生重复向量)"]
+        PG_FAIL -.->|"重试发布"| CALL_UPSERT
+    end

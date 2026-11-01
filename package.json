@@ -1,0 +1,11 @@
+{
+  "name": "ecompilot",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "docs:sync": "node 项目架构图/导出图表.cjs",
+    "docs:render": "node 项目架构图/导出图表.cjs --render"
+  },
+  "devDependencies": { "@mermaid-js/mermaid-cli": "12.0.0" },
+  "engines": { "node": ">=22" }
+}

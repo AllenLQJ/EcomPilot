@@ -1,0 +1,38 @@
+flowchart TD
+    START(["START: 收到售后申请单 claim_no\n写入 PG claim_tickets (SUBMITTED)"]) --> NODE_LOAD["load_order_and_policy 节点:\n1. 校验订单快照与可退上限 max_refundable_cents\n2. 调用 EcomRAG (:8002) 检索对应品类有效期内售后条款"]
+
+    NODE_LOAD --> NODE_TRACKS["run_three_tracks 节点 (asyncio.gather 节点内三轨并发)"]
+
+    subgraph Three_Tracks["三轨并发审核明细"]
+        T1["轨道 1：时效与状态规则轨 (纯规则无 LLM)\n核验签收天数、是否支持7天无理由、可退余额上限"]
+        T2["轨道 2：问题描述与凭证归因轨\n结合买家凭证、文本与 EcomNLU 辅助信号\n评估是否属实质量问题并记录 confidence / fallback_used"]
+        T3["轨道 3：条款算费与优惠分摊轨\n按实付占比分摊公式核算建议退赔分值 suggested_refund_cents\n及退货入库策略 (可售仓 vs 次品仓)"]
+    end
+
+    NODE_TRACKS --> T1 & T2 & T3
+    T1 & T2 & T3 --> NODE_AGG["aggregate_and_route 节点:\n汇总三轨结论与风险等级"]
+
+    NODE_AGG --> COND_ROUTE{"条件路由边: route_after_audit"}
+
+    COND_ROUTE -->|"硬性时效/规则不满足\n且无质量故障证据"| AUTO_REJ["auto_reject 节点:\n状态置为 AUTO_REJECTED\n通知 C 端买家驳回原因"] --> END_NODE(["END"])
+
+    COND_ROUTE -->|"关键凭证缺失\n(如漏水/坏果未传清晰照片)"| NEED_EVI["request_more_evidence 节点:\n状态置为 NEED_MORE_EVIDENCE\n通知买家限时补充材料"] --> WAIT_BUYER{"买家补齐凭证或主动撤回?"}
+    WAIT_BUYER -->|"买家补充凭证"| NODE_TRACKS
+    WAIT_BUYER -->|"买家主动撤回 / 超时未补"| WITHDRAWN["状态置为 WITHDRAWN\n通知 EcomPilot 恢复订单为 FULFILLED"] --> END_NODE
+
+    COND_ROUTE -->|"小额(<=5000分即50元) + 三轨全通过\n+ confidence>=0.85 + fallback_used==False"| AUTO_APP["auto_approve 节点:\n写入本地 PG 审批通过与 outbox_events\n生成唯一 refund_idempotency_key"]
+
+    COND_ROUTE -->|"大额(>5000分) 或 规则冲突\n或 confidence<0.85 或 fallback_used==True"| NOTIFY_SUP["notify_supervisor 节点:\n标记高风险复核原因并推送待审列表"]
+    NOTIFY_SUP --> INT_NODE["supervisor_review 节点:\n调用 LangGraph interrupt() 挂起工作流!\n状态快照持久化至 AsyncPostgresSaver (PostgreSQL)"]
+
+    INT_NODE -.->|"主管在 Vue 3 审批页操作\nPOST /api/v1/claims/{no}/confirm\n触发 Command(resume=...)"| RESUME_DEC{"判断主管恢复指令 action"}
+
+    RESUME_DEC -->|"REJECT (驳回申请)"| SUP_REJ["apply_supervisor_decision:\n状态置为 SUPERVISOR_REJECTED\n同步结果至 EcomPilot"] --> END_NODE
+    RESUME_DEC -->|"REQUEST_EVIDENCE (退回补材料)"| NEED_EVI
+    RESUME_DEC -->|"APPROVE / MODIFY_AMOUNT\n(强制校验修改金额 <= max_refundable_cents)"| SUP_APP["apply_supervisor_decision:\n同一 PG 事务写入审批结论与 outbox_events\n状态置为 APPROVED_PENDING_CALLBACK"]
+
+    AUTO_APP & SUP_APP --> EXEC_CB["execute_refund_callback 节点:\n先检查 step_execution_id 防止节点重入重复调用\n调用 EcomPilot POST /internal/v1/refunds/execute"]
+
+    EXEC_CB --> CB_RESULT{"回调响应结果?"}
+    CB_RESULT -->|"200 OK (含幂等重放成功)"| DONE_OK["更新工单状态为 COMPLETED\n标记 outbox_events 已完成"] --> END_NODE
+    CB_RESULT -->|"网络超时 / 5xx 异常"| CB_RETRY["状态置为 CALLBACK_RETRYING\n交由后台 Outbox 对账协程轮询 EcomPilot 退款状态直至闭环"] --> END_NODE

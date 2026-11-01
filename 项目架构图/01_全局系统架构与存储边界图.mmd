@@ -1,0 +1,70 @@
+flowchart TB
+    subgraph C_Client["C 端消费者入口 (Web / SSE)"]
+        CU["C 端买家"] --> CFE["EcomPilot 聊天与购物车界面 (static/index.html)"]
+    end
+
+    subgraph B_Client["B 端商家与风控运营入口 (Vue 3 :3000)"]
+        BU["运营专员 / 售后主管 / 受训客服"] --> BFE["EcomOps 管理端 (Vue 3 + Pinia + Element Plus)"]
+    end
+
+    subgraph EcomPilot_Sys["项目三：EcomPilot 智购领航 (C 端交易与多智能体层 :8085)"]
+        P_API["FastAPI 网关 + JWT 鉴权 (:8085)"]
+        P_CHAT["chat_service.py 意图识别与任务调度"]
+        P_TX["Order & Refund 交易执行服务 (SSOT)"]
+        subgraph A2A_Group["A2A 领域代理群 (:8011~8015)"]
+            A_ENV["env_fit_agent 环境与规格适配 (:8011)"]
+            A_SEL["selection_agent 跨品类选品 (:8012)"]
+            A_PRI["pricing_order_agent 受控凑单与锁单 (:8013)"]
+            A_AFT["aftersales_agent 售后候选确认与建单 (:8014)"]
+            A_SEED["seeding_note_agent 小红书种草二级代理 (:8015)"]
+        end
+        P_MCP["MCP 工具层 (库存乐观锁 / 凑单穷举校核 / 多图源回退)"]
+        MYSQL[("MySQL 8.0 (C 端唯一写库)\n商品目录 / SKU库存 / 优惠券 / 订单 / 退款流水")]
+    end
+
+    subgraph EcomOps_Sys["项目四：EcomOps 智购中台 (B 端受控工作流层 :8000)"]
+        O_API["FastAPI 网关 + RBAC 租户校验 (:8000)"]
+        subgraph LG_Group["LangGraph 四大受控工作流"]
+            G_CLM["claim_audit 售后三轨审核与主管 Interrupt 图"]
+            G_QA["kb_qa 自适应问答与低分入队图"]
+            G_LIS["listing_review 商品文案三层合规审查图"]
+            G_TRN["cs_training 客服五阶段抗压对练图"]
+        end
+        PG_SAVER["AsyncPostgresSaver 持久化检查点"]
+        OUTBOX["Outbox 异步回调与超时对账器"]
+        PG[("PostgreSQL 15 (:5433 B 端唯一写库)\n审核工单 / 审批记录 / 待补录队列 / 合规报告")]
+        MINIO[("MinIO 对象存储\n售后凭证图 / 商品详情 PDF")]
+    end
+
+    subgraph Shared_AI["底层共享感知与唯一知识底座"]
+        NLU["项目一：EcomNLU 智购感知 (:8001)\n评论10类预测 + 正负情感 + <0.65 低置信拒识"]
+        RAG["项目二：EcomRAG 智购百科 (:8002 唯一知识所有者)\nBGE-M3 稠密稀疏混合召回 + CrossEncoder 精排 + 幂等索引管理"]
+        MILVUS[("Milvus 2.4.4 (:19531)\nknowledge_domain 知识向量库 + 商品口碑库")]
+    end
+
+    CFE -->|HTTP + JWT / SSE| P_API
+    P_API --> P_CHAT
+    P_API --> P_TX
+    P_CHAT --> A_ENV & A_SEL & A_PRI & A_AFT & A_SEED
+    A_SEED -.->|二级 A2A 协作调用| A_SEL & A_PRI & A_ENV
+    A_SEL & A_PRI & A_AFT --> P_MCP
+    P_MCP --> MYSQL
+    P_TX --> MYSQL
+
+    BFE -->|HTTP + JWT / POST SSE| O_API
+    O_API --> G_CLM & G_QA & G_LIS & G_TRN
+    G_CLM & G_QA & G_TRN --> PG_SAVER
+    PG_SAVER --> PG
+    G_CLM & G_QA & G_LIS & G_TRN --> PG
+    G_LIS & G_CLM --> MINIO
+
+    P_CHAT -->|分句类目提示 & 情绪辅助信号| NLU
+    G_CLM -->|投诉文本情绪辅助信号| NLU
+    A_AFT -->|A2A 检索售后规则| RAG
+    G_CLM & G_QA & G_TRN -->|MCP / HTTP 检索条款| RAG
+    G_QA -->|审核通过后调用幂等 Upsert 接口| RAG
+    RAG --> MILVUS
+
+    A_AFT ==>|1. POST /internal/v1/claims/submit 提交售后审核单| O_API
+    G_CLM --> OUTBOX
+    OUTBOX ==>|2. POST /internal/v1/refunds/execute 幂等退款回调 & 状态对账| P_TX

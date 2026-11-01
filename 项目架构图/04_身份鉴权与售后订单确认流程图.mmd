@@ -1,0 +1,21 @@
+flowchart TD
+    REQ["客户端请求 (Header: Authorization Bearer JWT, Body: session_id, message)"] --> JWT_VERIFY{"验证 JWT 签名与有效期"}
+    JWT_VERIFY -->|"失败或过期"| ERR_401["返回 401 Unauthorized"]
+    JWT_VERIFY -->|"成功"| EXTRACT["从 Token 载荷提取可信身份:\njwt_user_id, jwt_role, jwt_tenant_id\n(忽略客户端 Body 中伪造的 user_id/tenant_id)"]
+
+    EXTRACT --> SESS_CHECK{"检查 session_id 是否存在?"}
+    SESS_CHECK -->|"已存在"| OWNER_CHECK{"校验 user_session_memory 表:\nsession.user_id == jwt_user_id\nAND session.tenant_id == jwt_tenant_id?"}
+    OWNER_CHECK -->|"不匹配 (越权访问)"| ERR_403["返回 403 Forbidden 并记录安全审计日志"]
+    OWNER_CHECK -->|"匹配"| LOAD_MEM["按复合键加载会话上下文:\ncache_key = '{jwt_tenant_id}:{jwt_user_id}:{session_id}'"]
+    SESS_CHECK -->|"新会话"| INIT_MEM["创建绑定 jwt_user_id 与 jwt_tenant_id 的新会话"]
+
+    LOAD_MEM & INIT_MEM --> INTENT{"识别用户本轮意图"}
+    INTENT -->|"售后退换/投诉诉求"| HAS_OID{"用户消息或上下文是否已包含\n经确认的 order_id?"}
+    HAS_OID -->|"未提供 order_id (免单号反查)"| QUERY_CAND["查询 MySQL orders 表:\nWHERE user_id = :jwt_user_id\nAND status IN ('PAID_SIMULATED','FULFILLED')\n(若有 EcomNLU 识别标签则按匹配品类优先排序)"]
+    QUERY_CAND --> CAND_COUNT{"是否存在可售后候选订单?"}
+    CAND_COUNT -->|"0 笔"| NO_ORD["提示用户当前账号下无已支付/已履约订单"]
+    CAND_COUNT -->|">= 1 笔"| ASK_CONFIRM["向前端返回候选订单选择卡片\n(严禁后台自动选中最近一单直接退赔!)"]
+    ASK_CONFIRM --> WAIT_CLICK["等待用户点击确认具体 order_id 与 order_item_id"]
+    HAS_OID -->|"已提供且用户已确认 order_id"| VERIFY_ORD{"校验该 order_id 归属:\norder.user_id == jwt_user_id?"}
+    VERIFY_ORD -->|"否"| ERR_403
+    VERIFY_ORD -->|"是"| SUBMIT_CLAIM["允许构建售后申请单提交至 EcomOps"]

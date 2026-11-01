@@ -1,0 +1,86 @@
+erDiagram
+    CATALOG_CATEGORIES ||--o{ PRODUCTS_SKU : "1:N 业务类目包含SKU"
+    NLU_LABEL_TO_CATALOG_MAP }o--|| CATALOG_CATEGORIES : "软映射提示"
+    PRODUCTS_SKU ||--o{ ORDER_ITEMS : "被购买"
+    PRICE_QUOTES ||--o| ORDERS : "15分钟核价转化"
+    ORDERS ||--|{ ORDER_ITEMS : "1:N 包含子项"
+    ORDERS ||--o{ USER_COUPONS : "锁定/核销优惠券"
+    ORDERS ||--o{ REFUND_EXECUTIONS : "1:N 幂等退款执行流水"
+
+    CLAIM_TICKETS ||--o{ CLAIM_TRACK_RESULTS : "1:3 三轨审核明细"
+    CLAIM_TICKETS ||--o{ CLAIM_APPROVALS : "1:N 主管审批记录"
+    CLAIM_TICKETS ||--o{ OUTBOX_EVENTS : "触发跨系统可靠回调"
+
+    ORDERS ||..o{ CLAIM_TICKETS : "跨系统 API 关联 (order_id)"
+    OUTBOX_EVENTS ||..|| REFUND_EXECUTIONS : "跨系统幂等键对齐 (refund_idempotency_key)"
+    KNOWLEDGE_PENDING_QUEUE ||..o| MILVUS_KNOWLEDGE_DOMAIN : "跨系统幂等发布 (chunk_id)"
+
+    CATALOG_CATEGORIES {
+        varchar catalog_category_id PK "如 HOME_APPLIANCE_HEATER"
+        varchar parent_id
+        varchar category_name
+        enum item_type "PHYSICAL | SERVICE"
+    }
+    PRODUCTS_SKU {
+        varchar sku_id PK "MySQL (EcomPilot SSOT)"
+        varchar shop_id "店铺ID(支持跨店满减)"
+        varchar catalog_category_id FK
+        varchar brand_name "如 蒙牛 / 海尔"
+        bigint unit_price_cents "单价(分)"
+        int sellable_stock "可售库存"
+        int defective_stock "售后次品仓"
+        int version "乐观锁版本号"
+        decimal positive_review_ratio "好评率"
+    }
+    ORDERS {
+        varchar order_id PK "MySQL (EcomPilot SSOT)"
+        varchar idempotency_key UK "下单防重唯一键"
+        varchar quote_id FK
+        varchar tenant_id
+        varchar user_id "来自JWT可信身份"
+        bigint total_original_cents
+        bigint total_discount_cents
+        bigint total_payable_cents
+        enum order_status "CREATED|STOCK_LOCKED|PAID_SIMULATED|FULFILLED|AFTER_SALE_OPEN|REFUNDED_PARTIAL|REFUNDED_FULL|CANCELLED"
+    }
+    REFUND_EXECUTIONS {
+        varchar refund_execution_id PK "MySQL (EcomPilot SSOT)"
+        varchar refund_idempotency_key UK "跨系统退款唯一幂等键"
+        varchar claim_no
+        varchar order_id FK
+        varchar order_item_id
+        bigint refunded_cents "实际退还分值"
+        enum restock_policy "SELLABLE_WAREHOUSE | DEFECTIVE_WAREHOUSE | NO_RESTOCK"
+        varchar execution_status "SUCCESS | FAILED"
+    }
+    CLAIM_TICKETS {
+        varchar claim_no PK "PostgreSQL (EcomOps SSOT)"
+        varchar tenant_id
+        varchar user_id
+        varchar order_id "关联C端订单号"
+        varchar order_item_id
+        bigint max_refundable_cents "可退实付上限(分)"
+        bigint approved_refund_cents "最终批准退赔(分)"
+        varchar claim_status "SUBMITTED|AUTO_REJECTED|NEED_MORE_EVIDENCE|PENDING_SUPERVISOR_REVIEW|APPROVED_PENDING_CALLBACK|CALLBACK_RETRYING|COMPLETED"
+        boolean fallback_used "任一轨是否触发降级"
+    }
+    KNOWLEDGE_PENDING_QUEUE {
+        uuid queue_id PK "PostgreSQL (EcomOps SSOT)"
+        varchar tenant_id
+        varchar catalog_category_id
+        text question_text
+        text standard_answer_draft
+        int version "递增版本号"
+        varchar deterministic_chunk_id UK "sha256(queue_id:version)"
+        enum publish_status "PENDING_REVIEW|DISCARDED|PUBLISHING|PUBLISHED|PUBLISH_FAILED"
+    }
+    MILVUS_KNOWLEDGE_DOMAIN {
+        varchar chunk_id PK "Milvus (EcomRAG SSOT)"
+        varchar tenant_id
+        varchar catalog_category_id
+        varchar rule_source "规则来源名称"
+        bool is_demo_rule "沙盒演示规则标记"
+        int64 effective_from
+        int64 effective_to
+        int32 version
+    }

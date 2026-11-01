@@ -1,0 +1,29 @@
+flowchart LR
+    UP(["运营上传商品详情页 PDF + 申报上架类目 declared_category"]) --> MINIO_UP["upload_to_minio 节点:\n真实写入 MinIO ecomops-docs 桶\n记录 pdf_minio_path"]
+    MINIO_UP --> MINIO_DL["download_pdf 节点:\n读取 PDF 字节流"]
+    MINIO_DL --> PYMUPDF["extract_text 节点:\nPyMuPDF 提取文本并处理双栏阅读顺序\n(仅作文本级审查, 不承诺视觉首屏排版美学打分)"]
+    PYMUPDF --> STRUCT["extract_structured 节点:\n抽取商品标题、核心参数表、功效宣称、证书编号列表"]
+
+    STRUCT --> PARALLEL["run_compliance_checks 节点 (asyncio.gather 并发执行专项检查)"]
+
+    subgraph Checks["专项合规与质量检查器"]
+        C1["检查器 1：广告法违禁极限词扫描\n(规则词库 + LLM 上下文复核)"]
+        C2["检查器 2：申报类目必填参数完整度核查\n(对照 declared_category 必填属性表)"]
+        C3["检查器 3：医疗/虚假功效宣称排查\n(如洗发水防脱生发、水果治病等)"]
+        C4["检查器 4：资质与检测报告编号提取\n(3C编号/化妆品备案号/质检报告号)"]
+        C5["检查器 5：卖点可读性与文案优化建议"]
+    end
+
+    PARALLEL --> C1 & C2 & C3 & C4 & C5
+    C1 & C2 & C3 & C4 & C5 --> DIAG["diagnose_and_classify 节点:\n汇总各检查器结果与异常降级标志 fallback_used"]
+
+    DIAG --> LAYER_JUDGE{"三层合规门禁判定逻辑\n(严禁用加权总分抵消违规项!)"}
+
+    LAYER_JUDGE -->|"存在任意 1 项阻断性违规\n(极限词 / 违规功效 / 关键必填参数缺失)"| OUT_REJECT["结论: REJECTED_BLOCKING (一票否决)\n输出第一层: blocking_violations 强制整改清单"]
+
+    LAYER_JUDGE -->|"无阻断项, 但存在待核实证书编号\n或任一检查器调用失败 (fallback_used==True)"| OUT_MANUAL["结论: PENDING_MANUAL_VERIFY (转人工核验)\n输出第二层: manual_verify_items (严禁拿默认分直接当通过!)"]
+
+    LAYER_JUDGE -->|"无阻断项 且 无待人工核实/降级项"| OUT_PASS["结论: PASSED_WITH_SUGGESTIONS (审查通过)\n输出第三层: advisory_suggestions 文案优化建议"]
+
+    OUT_REJECT & OUT_MANUAL & OUT_PASS --> SAVE_PG["save_results 节点:\n持久化三层结构化报告至 PostgreSQL listing_reviews 表"]
+    SAVE_PG -.->|"可选联动: 提取该商品高频争议点"| SEED_GEN["生成客服演练场景种子卡 training_scenario_seed\n(供客服进入 cs_training 开展多轮人工对练)"]

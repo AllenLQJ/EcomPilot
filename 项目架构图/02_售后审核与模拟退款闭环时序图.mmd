@@ -1,0 +1,56 @@
+sequenceDiagram
+    autonumber
+    actor Buyer as C 端买家
+    participant Pilot as EcomPilot (C 端 :8085)
+    participant MySQL as MySQL (订单与退款 SSOT)
+    participant NLU as EcomNLU (:8001)
+    participant RAG as EcomRAG (:8002)
+    participant Ops as EcomOps (B 端 :8000)
+    participant PG as PostgreSQL (工单与检查点 SSOT)
+    actor Sup as B 端售后主管 (Vue 3)
+
+    Buyer->>Pilot: 吐槽：“刚买的热水器打不着火还漏水，怎么退货？” (携带 JWT)
+    Pilot->>Pilot: 解析 JWT 获取可信 user_id 与 tenant_id
+    Pilot->>NLU: POST /api/v1/nlu/analyze (售后主观短句)
+    NLU-->>Pilot: 返回 label="热水器"(0.98), sentiment="NEGATIVE"(0.96)
+    Pilot->>MySQL: 查询该 user_id 名下处于 FULFILLED 状态的候选订单 (按热水器类目优先排序)
+    MySQL-->>Pilot: 返回候选订单列表 [ORD_88310]
+    Pilot-->>Buyer: 展示候选订单卡片 + 初步安抚，请买家点击确认要申请售后的订单
+
+    Buyer->>Pilot: 点击确认订单 ORD_88310 并上传漏水凭证提交退货退款
+    Pilot->>MySQL: 校验归属与可退上限，更新订单状态为 AFTER_SALE_OPEN
+    Pilot->>Ops: POST /internal/v1/claims/submit (携带 claim_no, order_id, max_refundable_cents, nlu_signal)
+    Ops->>PG: 幂等写入 claim_tickets (状态 SUBMITTED)，启动 claim_audit LangGraph
+
+    par 三轨并发审核 (run_three_tracks)
+        Ops->>Ops: 1. 规则轨：核验签收 5 天 <= 15 天质量换退期 (Pass)
+    and
+        Ops->>RAG: 2. 条款轨：检索 HOME_APPLIANCE_HEATER 有效期内退换与运费规则
+        RAG-->>Ops: 返回《热水器整机保修与漏水退换细则》[沙盒演示规则]
+    and
+        Ops->>Ops: 3. 算费与凭证轨：核算应退 112000 分，结合负向信号评估归因
+    end
+
+    Ops->>Ops: aggregate_and_route 判定金额 112000 分 > 5000 分阈值，需主管复核
+    Ops->>PG: 触发 supervisor_review: interrupt()，状态持久化至 AsyncPostgresSaver
+    Ops-->>Pilot: 返回 202 Accepted (status="PENDING_SUPERVISOR_REVIEW")
+
+    Sup->>Ops: 在 Vue 3 审批页查看挂起工单，点击“批准全额退款 112000 分”
+    Ops->>PG: Command(resume=APPROVE)，在同一 PG 事务写审批记录与 outbox_events (APPROVED_PENDING_CALLBACK)
+    Ops->>Pilot: POST /internal/v1/refunds/execute (携带 refund_idempotency_key="REFUND_CLM_182_V1")
+
+    alt 正常回调响应
+        Pilot->>MySQL: 校验 refund_idempotency_key 唯一索引，写退款流水，更新订单为 REFUNDED_FULL (入次品仓)
+        MySQL-->>Pilot: 事务提交成功
+        Pilot-->>Ops: 200 OK (execution_status="SUCCESS")
+        Ops->>PG: 更新工单为 COMPLETED，标记 outbox 已完成
+    else 回调网络读取超时 (但 Pilot 实际已执行或未执行)
+        Pilot--xOps: ReadTimeout 网络超时
+        Ops->>PG: 工单置为 CALLBACK_RETRYING
+        loop 后台对账协程轮询与幂等重发
+            Ops->>Pilot: GET /internal/v1/refunds/status?refund_idempotency_key=REFUND_CLM_182_V1
+            Pilot->>MySQL: 查询 refund_executions 表
+            Pilot-->>Ops: 返回 status="SUCCESS" (或 NOT_FOUND 则触发幂等重发)
+            Ops->>PG: 确认对账一致，更新工单为 COMPLETED
+        end
+    end

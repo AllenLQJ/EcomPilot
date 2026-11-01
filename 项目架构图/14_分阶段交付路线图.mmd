@@ -1,0 +1,19 @@
+gantt
+    title Ecom 四件套分阶段交付路线图 (MVP 单闭环先行)
+    dateFormat  YYYY-MM-DD
+    axisFormat  %m-%d
+    section Milestone 1 (MVP)
+    EcomNLU 分句预测与低置信拒识接口       :m1_1, 2026-11-01, 2d
+    EcomRAG 售后规则库构建与混合检索服务   :m1_2, 2026-11-02, 3d
+    EcomPilot 订单表与免单号候选确认/退款接口 :m1_3, 2026-11-04, 3d
+    EcomOps 售后三轨审核图与主管Interrupt审批 :m1_4, 2026-11-06, 4d
+    跨系统Outbox回调对账与AC-TX-04验收     :m1_5, 2026-11-09, 2d
+    section Milestone 2
+    EcomOps kb_qa 图与记忆摘要/缩进Bug修复 :m2_1, 2026-11-11, 3d
+    知识待补充页与 EcomRAG 幂等Upsert飞轮  :m2_2, 2026-11-13, 3d
+    section Milestone 3
+    EcomPilot 乐观锁防超卖与受控凑单算价器 :m3_1, 2026-11-16, 4d
+    环境适配/选品/小红书二级A2A种草联调    :m3_2, 2026-11-19, 3d
+    section Milestone 4
+    商品文案三层合规审查与真实MinIO存储    :m4_1, 2026-11-22, 3d
+    客服五阶段抗压对练与全套离线指标评测   :m4_2, 2026-11-25, 3d

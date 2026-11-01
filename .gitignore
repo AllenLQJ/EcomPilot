@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.*
+!.env.example
+项目架构图/浏览器配置.json
+*.log
+*.zip
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.pem
+*.key

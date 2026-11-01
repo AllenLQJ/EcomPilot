@@ -1,0 +1,19 @@
+flowchart TD
+    IN["输入文本请求 + scene_type 场景标识"] --> GUARD{"检查 scene_type 是否属于适用域?\n(仅限: 买家评论 / 售后反馈 / 导购短句)"}
+    GUARD -->|"否 (如: 商品PDF正文 / 客服道歉话术)"| REJ_SCENE["拒绝调用模型\n返回 scene_not_applicable=True"]
+    GUARD -->|"是"| SPLIT["按标点与连词(和/以及/顺便/还要)切分为独立子句列表"]
+    SPLIT --> INFER["PyTorch 批量推理:\n1. 10类实验标签 Softmax 概率\n2. 正负向情感 Softmax 概率"]
+    INFER --> CHECK_CONF{"逐子句检查最高类别概率\nmax_prob >= 0.65 ?"}
+
+    CHECK_CONF -->|"否 (如搜'电脑内胆包'或跨界商品)"| ABSTAIN["标记 predicted_label = 'ABSTAIN' (低置信拒识)\n不生成任何类目过滤条件"]
+    CHECK_CONF -->|"是"| MAP["查询 nlu_label_to_catalog_map 解耦映射表"]
+
+    MAP --> TYPE_SPLIT{"判断实验标签属性"}
+    TYPE_SPLIT -->|"标准品类标签\n(书籍/平板/手机/水果/洗发水/热水器/衣服/计算机)"| HINT_CAT["输出 catalog_category_hint\n(仅作检索加权或候选池提示, 非硬过滤)"]
+    TYPE_SPLIT -->|"品牌型标签\n(蒙牛)"| HINT_BRAND["输出 brand_hint='蒙牛'\n+ catalog_category_hint='DAIRY_MILK'"]
+    TYPE_SPLIT -->|"服务型标签\n(酒店)"| HINT_SVC["输出 item_type='SERVICE'\n+ catalog_category_hint='TRAVEL_HOTEL'"]
+
+    ABSTAIN & HINT_CAT & HINT_BRAND & HINT_SVC --> SENT_CHECK{"检查场景是否为售后反馈\n且 sentiment=='NEGATIVE' & score>=0.85?"}
+    SENT_CHECK -->|"是"| BOOST["设置 priority_boost = True\n(仅作售后工单高优排序辅助信号, 不直接触发退款)"]
+    SENT_CHECK -->|"否"| NORMAL["设置 priority_boost = False"]
+    BOOST & NORMAL --> OUT["汇总输出 NLUAnalysisResponse\n(含各子句候选标签列表与拒识标记)"]
