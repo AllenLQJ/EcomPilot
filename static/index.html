@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EcomPilot 购物助手</title>
+<style>
+*{box-sizing:border-box}body{font:16px system-ui;margin:0;background:#f4f6f9;color:#182538}header,main,footer{max-width:850px;margin:auto;padding:16px}header{display:flex;gap:8px;flex-wrap:wrap;align-items:center}h1{font-size:22px}input,textarea,button{font:inherit;padding:10px;border:1px solid #ccd3df;border-radius:8px}button{background:#174eaa;color:white;cursor:pointer}button:disabled{opacity:.5}#jwt{flex:1;min-width:180px}#messages{min-height:45vh}article{background:white;padding:16px;margin:12px 0;border-radius:12px;overflow-wrap:anywhere;white-space:pre-wrap}.user{background:#e1edff}.card{border:1px solid #ccd3df}footer{display:flex;gap:8px;position:sticky;bottom:0;background:#f4f6f9}textarea{flex:1;min-width:0}label{display:block;margin:10px 0}img{max-width:160px;max-height:160px}dialog{border:0;border-radius:12px;max-width:95vw;width:420px}#status{width:100%;color:#9c2929}small{color:#56657a}
+</style>
+<header><h1>EcomPilot</h1><input id="user" aria-label="用户 ID" placeholder="开发 user_id"><button id="token">获取开发令牌</button><input id="jwt" aria-label="JWT" placeholder="或粘贴 JWT" type="password"><button id="newSession">新会话</button><button id="openCart">购物车 <span id="count">0</span></button><small>开发令牌需服务端开启 ECOMPILOT_DEV_TOKENS=1</small><div id="status" role="status"></div></header>
+<main id="messages" aria-live="polite"></main><footer><textarea id="message" rows="2" aria-label="消息" placeholder="描述选购需求或售后问题"></textarea><button id="send">发送</button></footer>
+<dialog id="cart"><h2>本地购物车</h2><div id="cartItems"></div><button id="closeCart">关闭</button></dialog>
+<script>
+const $=id=>document.getElementById(id), money=c=>'¥'+(Number(c||0)/100).toFixed(2);
+let session=crypto.randomUUID(), cart=[], busy=false;
+function node(tag,text,parent){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(parent)parent.append(e);return e}
+function bubble(text,kind=''){const e=node('article',text,$('messages'));e.className=kind;return e}
+function button(text,parent,fn){const b=node('button',text,parent);b.onclick=fn;return b}
+function headers(){return {'Content-Type':'application/json',Authorization:'Bearer '+$('jwt').value.trim()}}
+async function api(path,body){const r=await fetch(path,{method:'POST',headers:headers(),body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw Error(data.error?.message||'请求失败');return data}
+function failure(e){$('status').textContent=e.message}
+function addCart(items){for(const i of items){const old=cart.find(x=>x.sku_id===i.sku_id);if(old)old.qty+=i.qty||1;else cart.push({...i,qty:i.qty||1})}renderCart()}
+function renderCart(){$('count').textContent=cart.reduce((n,x)=>n+x.qty,0);$('cartItems').replaceChildren();for(const i of cart){const row=node('p',`${i.sku_name||i.sku_id} × ${i.qty} ${money(i.unit_price_cents)}`,$('cartItems'));button('移除',row,()=>{cart=cart.filter(x=>x!==i);renderCart()})}if(!cart.length)node('p','购物车为空',$('cartItems'))}
+function showCard(data,reason){const box=bubble('','card');
+ if(data.type==='candidate_orders'){node('h3','请选择售后订单商品',box);for(const order of data.candidates){node('p',`${order.order_id} · ${order.order_status} · ${money(order.total_payable_cents)}`,box);for(const item of order.items||[]){const row=node('p',`${item.sku_name||item.sku_id||item.order_item_id} × ${item.qty||1}`,box);const b=button('确认此订单',row,async()=>{if(busy)return;b.disabled=true;const ok=await send(reason,{confirmed_order_id:order.order_id,confirmed_order_item_id:item.order_item_id});b.disabled=ok});b.disabled=!item.order_item_id}}}
+ else if(data.type==='quote'){const q=data.quote;node('h3','报价 '+q.quote_id,box);for(const i of q.items||[])node('p',`${i.sku_name||i.sku_id} × ${i.qty} · ${money(i.payable_cents)}`,box);node('p',`原价 ${money(q.total_original_cents)} / 优惠 ${money(q.total_discount_cents)} / 实付 ${money(q.total_payable_cents)}`,box);node('small','有效期至 '+q.expires_at,box);button('加入本地购物车',box,()=>addCart(q.items))}
+ else if(data.type==='addon_suggestion'){node('h3','可选凑单建议',box);node('small',`建议方案可省 ${money(data.saving_cents)}，以确认后的新报价为准`,box);const checks=[];for(const a of data.addons){const label=node('label',undefined,box),input=node('input',undefined,label);input.type='checkbox';input.value=a.sku_id;checks.push(input);node('span',`${a.sku_name} ${money(a.unit_price_cents)} · 省 ${money(a.saving_cents)}`,label)}button('确认勾选并重新报价',box,async()=>{try{const ids=checks.filter(c=>c.checked).map(c=>c.value);if(!ids.length)throw Error('请先勾选凑单商品');const q=await api('/api/v1/quotes/'+encodeURIComponent(data.quote_id)+'/confirm-addons',{addon_sku_ids:ids});showCard({type:'quote',quote:q},reason)}catch(e){failure(e)}})}
+ else if(data.type==='seeding_note'){const n=data.note;node('h3',n.title,box);node('p',n.body,box);for(const image of n.images||[]){try{const url=new URL(image.url,location.href);if(!['http:','https:'].includes(url.protocol))continue;const img=node('img',undefined,box);img.src=url.href;img.alt=image.sku_id||'商品图片';img.loading='lazy'}catch{}}if(n.savings_formula)node('p',n.savings_formula,box);if(n.degraded?.length)node('small','部分内容暂缺：'+n.degraded.join('、'),box)}
+ else if(data.type==='claim_submitted')node('p','售后申请已提交：'+data.claim_no+' · '+(data.claim_status||''),box);
+}
+async function send(message,extra={}){if(busy||!message.trim())return false;busy=true;$('send').disabled=true;$('status').textContent='';bubble(message,'user');let failed=false,completed=false;
+ try{const r=await fetch('/api/v1/chat/stream',{method:'POST',headers:headers(),body:JSON.stringify({session_id:session,message,...extra})});if(!r.ok){const d=await r.json();throw Error(d.error?.message||'请求失败')}const reader=r.body.getReader(),decoder=new TextDecoder();let buffer='';
+ function dispatch(frame){let event='message',lines=[];for(const line of frame.split('\n')){if(line.startsWith('event:'))event=line.slice(6).trim();if(line.startsWith('data:'))lines.push(line.slice(5).trimStart())}if(!lines.length)return;const data=JSON.parse(lines.join('\n'));if(event==='token')bubble(data.text);if(event==='card')showCard(data,message);if(event==='error'){failed=true;failure(Error(data.code+'：'+data.message))}if(event==='done')completed=true}
+ while(true){const {value,done}=await reader.read();buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});buffer=buffer.replace(/\r\n/g,'\n');let p;while((p=buffer.indexOf('\n\n'))>=0){dispatch(buffer.slice(0,p));buffer=buffer.slice(p+2)}if(done)break}if(!failed&&!completed)throw Error('连接中断，请重试');
+ }catch(e){failed=true;failure(e)}finally{busy=false;$('send').disabled=false}return !failed}
+$('send').onclick=async()=>{const text=$('message').value;if(await send(text))$('message').value=''};
+$('message').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('send').click()}};
+$('token').onclick=async()=>{try{const d=await api('/api/v1/dev/token',{user_id:$('user').value});$('jwt').value=d.access_token||d.token||'';session=crypto.randomUUID();$('status').textContent='令牌已获取'}catch(e){failure(e)}};
+$('newSession').onclick=()=>{if(!busy){session=crypto.randomUUID();$('messages').replaceChildren()}};
+$('jwt').onchange=()=>{session=crypto.randomUUID()};$('openCart').onclick=()=>{renderCart();$('cart').showModal()};$('closeCart').onclick=()=>$('cart').close();
+</script></html>
